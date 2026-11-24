@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Quản lý thi</title>
+<meta name="robots" content="noindex">
+<link rel="stylesheet" href="style.css">
+<script src="config.js"></script>
+</head>
+<body>
+<div class="top">
+  <div><h1 id="appName">QUẢN LÝ THI</h1><small>Trang quản lý · bảng điểm và thống kê</small></div>
+  <div class="row"><a id="sheetLink" class="hidden" target="_blank" style="color:#fff;font-size:13px">Mở Google Sheet</a>
+  <button class="btn-ghost hidden" id="btnReload">Tải lại</button></div>
+</div>
+<div class="wrap wide">
+  <section id="scPass" class="card" style="max-width:420px;margin:40px auto">
+    <h2>Đăng nhập quản lý</h2>
+    <form id="fPass" class="row"><input type="password" id="pass" class="grow" placeholder="Mật khẩu quản lý" required><button class="btn">Xem</button></form>
+    <div id="errPass" class="err hidden"></div>
+  </section>
+
+  <section id="scMain" class="hidden">
+    <div class="stats" id="overview" style="margin:0 0 16px"></div>
+    <div class="card">
+      <div class="row" style="margin-bottom:12px">
+        <label>Phần thi <select id="fPhan" style="width:auto"></select></label>
+        <label>Nhóm <select id="fNhom" style="width:auto"></select></label>
+      </div>
+      <div class="tabs">
+        <button class="tab on" data-tab="rank">Bảng điểm & xếp hạng</button>
+        <button class="tab" data-tab="hard">Câu sai nhiều nhất</button>
+        <button class="tab" data-tab="who">Ai sai cái gì</button>
+        <button class="tab" data-tab="not">Ai chưa thi / chưa đạt</button>
+        <button class="tab" data-tab="log">Lịch sử thi</button>
+      </div>
+      <div id="tabBody"></div>
+    </div>
+  </section>
+</div>
+
+<script>
+(function () {
+  var C = window.APP_CONFIG || {};
+  var $ = function (id) { return document.getElementById(id); };
+  var D = null, tab = 'rank', sortState = {};
+  $('appName').textContent = 'QUẢN LÝ · ' + (C.TEN_CHUONG_TRINH || 'THI');
+
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+  function f(n) { return n == null || isNaN(n) ? '—' : (Math.round(n * 100) / 100).toString().replace('.', ','); }
+  function dt(ms) { if (!ms) return ''; var d = new Date(ms); return d.toLocaleDateString('vi-VN') + ' ' + d.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }); }
+  function isDat(kq) { return String(kq || '').indexOf('ĐẠT') === 0; }
+
+  function api(data) {
+    return fetch(C.API_URL, { method: 'POST', body: JSON.stringify(data), redirect: 'follow' })
+      .then(function (r) { return r.json(); })
+      .then(function (j) { if (!j.ok) throw new Error(j.error); return j; });
+  }
+
+  function load(pass) {
+    return api({ action: 'admin', password: pass }).then(function (r) {
+      D = r;
+      try { sessionStorage.setItem('admin_pass', pass); } catch (e) {}
+      $('sheetLink').href = r.sheetUrl; $('sheetLink').classList.remove('hidden');
+      $('btnReload').classList.remove('hidden');
+      fillFilters(); render();
+      $('scPass').classList.add('hidden'); $('scMain').classList.remove('hidden');
+    });
+  }
+
+  $('fPass').onsubmit = function (e) {
+    e.preventDefault();
+    $('errPass').classList.add('hidden');
+    load($('pass').value).catch(function (ex) { $('errPass').textContent = ex.message; $('errPass').classList.remove('hidden'); });
+  };
+  $('btnReload').onclick = function () { var p = sessionStorage.getItem('admin_pass'); if (p) load(p).catch(function (ex) { alert(ex.message); }); };
+  var saved = null; try { saved = sessionStorage.getItem('admin_pass'); } catch (e) {}
+  if (saved) load(saved).catch(function () {});
+
+  function fillFilters() {
+    var keepP = $('fPhan').value, keepN = $('fNhom').value;
+    $('fPhan').innerHTML = '<option value="">Tất cả phần</option>' + D.phans.filter(function (p) { return p.mo || D.ketQua.some(function (k) { return k.phan === p.ma; }); })
+      .map(function (p) { return '<option value="' + esc(p.ma) + '">' + esc(p.ma + '. ' + p.ten) + '</option>'; }).join('');
+    var nhoms = {}; D.nhanVien.forEach(function (n) { if (n.nhom) nhoms[n.nhom] = 1; });
+    $('fNhom').innerHTML = '<option value="">Tất cả nhóm</option>' + Object.keys(nhoms).map(function (n) { return '<option>' + esc(n) + '</option>'; }).join('');
+    $('fPhan').value = keepP; $('fNhom').value = keepN;
+  }
+  $('fPhan').onchange = render; $('fNhom').onchange = render;
+  Array.prototype.forEach.call(document.querySelectorAll('.tab'), function (b) {
+    b.onclick = function () {
+      tab = b.getAttribute('data-tab');
+      Array.prototype.forEach.call(document.querySelectorAll('.tab'), function (x) { x.classList.toggle('on', x === b); });
+      render();
+    };
+  });
+
+  function phansSel() { var v = $('fPhan').value; return D.phans.filter(function (p) { return (v ? p.ma === v : p.mo); }); }
+  function nvSel() { var n = $('fNhom').value; return D.nhanVien.filter(function (x) { return !n || x.nhom === n; }); }
+  function kqOf(ma, phan) { return D.ketQua.filter(function (k) { return k.ma.toUpperCase() === ma.toUpperCase() && (!phan || k.phan === phan); }); }
+  function best(list) { var b = null; list.forEach(function (k) { if (k.tong != null && (b == null || k.tong > b)) b = k.tong; }); return b; }
+
+  function render() {
+    renderOverview();
+    var fn = { rank: tRank, hard: tHard, who: tWho, not: tNot, log: tLog }[tab];
+    $('tabBody').innerHTML = fn();
+    bindSort();
+    if (tab === 'who') { $('whoSel').onchange = function () { $('whoBody').innerHTML = whoBody($('whoSel').value); }; }
+    if (tab === 'hard') {
+      Array.prototype.forEach.call(document.querySelectorAll('[data-cau]'), function (tr) {
+        tr.style.cursor = 'pointer';
+        tr.onclick = function () { var d = $('det-' + tr.getAttribute('data-cau')); d.classList.toggle('hidden'); };
+      });
+    }
+  }
+
+  function renderOverview() {
+    var nvs = nvSel(), phans = phansSel(), maSet = {};
+    nvs.forEach(function (n) { maSet[n.ma.toUpperCase()] = 1; });
+    var kq = D.ketQua.filter(function (k) { return maSet[k.ma.toUpperCase()] && phans.some(function (p) { return p.ma === k.phan; }); });
+    var daThi = {}, datSet = {};
+    kq.forEach(function (k) { daThi[k.ma.toUpperCase() + '|' + k.phan] = 1; if (isDat(k.kq)) datSet[k.ma.toUpperCase() + '|' + k.phan] = 1; });
+    var can = nvs.length * phans.length;
+    var nThi = Object.keys(daThi).length, nDat = Object.keys(datSet).length;
+    $('overview').innerHTML =
+      '<div class="stat">Nhân sự<b>' + nvs.length + '</b></div>' +
+      '<div class="stat">Lượt thi<b>' + kq.length + '</b></div>' +
+      '<div class="stat">Đã thi (người × phần)<b>' + nThi + '/' + can + '</b></div>' +
+      '<div class="stat">Đã đạt (người × phần)<b>' + nDat + '/' + can + '</b></div>' +
+      '<div class="stat">Chưa thi<b style="color:var(--red)">' + (can - nThi) + '</b></div>';
+  }
+
+  // ----- Bảng xếp hạng -----
+  function tRank() {
+    var phans = phansSel(), one = $('fPhan').value;
+    var rows = nvSel().map(function (n) {
+      var cells = phans.map(function (p) { var l = kqOf(n.ma, p.ma); return { lan: l.length, best: best(l), dat: l.some(function (k) { return isDat(k.kq); }) }; });
+      var thi = cells.filter(function (c) { return c.lan; });
+      var avg = thi.length ? thi.reduce(function (s, c) { return s + (c.best || 0); }, 0) / thi.length : null;
+      return { n: n, cells: cells, datN: cells.filter(function (c) { return c.dat; }).length, avg: avg, lan: cells.reduce(function (s, c) { return s + c.lan; }, 0) };
+    });
+    rows.sort(function (a, b) { return (b.datN - a.datN) || ((b.avg || -1) - (a.avg || -1)) || (a.lan - b.lan); });
+    var head = '<tr><th>Hạng</th><th>Mã NV</th><th>Tên</th><th>Nhóm</th>' +
+      phans.map(function (p) { return '<th title="' + esc(p.ten) + '">' + esc(p.ma) + (one ? ' · Điểm cao nhất' : '') + '</th>'; }).join('') +
+      (one ? '<th>Số lần thi</th>' : '<th>Số phần đạt</th><th>Điểm TB</th><th>Tổng lượt thi</th>') + '</tr>';
+    var body = rows.map(function (r, i) {
+      return '<tr><td><b>' + (r.lan ? i + 1 : '—') + '</b></td><td>' + esc(r.n.ma) + '</td><td>' + esc(r.n.ten) + '</td><td>' + esc(r.n.nhom) + '</td>' +
+        r.cells.map(function (c) {
+          if (!c.lan) return '<td><span class="badge b-gray">Chưa thi</span></td>';
+          return '<td><span class="badge ' + (c.dat ? 'b-green' : 'b-red') + '">' + f(c.best) + '</span> <span class="muted" style="font-size:12px">' + c.lan + ' lần</span></td>';
+        }).join('') +
+        (one ? '<td>' + r.lan + '</td>' : '<td>' + r.datN + '/' + phans.length + '</td><td>' + f(r.avg) + '</td><td>' + r.lan + '</td>') + '</tr>';
+    }).join('');
+    return '<div class="scroll"><table class="sortable"><thead>' + head + '</thead><tbody>' + body + '</tbody></table></div>';
+  }
+
+  // ----- Câu sai nhiều -----
+  function tHard() {
+    var v = $('fPhan').value, maSet = {};
+    nvSel().forEach(function (n) { maSet[n.ma.toUpperCase()] = 1; });
+    var list = D.cau.filter(function (c) { return !v || c.phan === v; }).map(function (c) {
+      var who = D.sai.filter(function (s) { return s.id === c.id && maSet[s.ma.toUpperCase()]; });
+      return { c: c, pct: c.luot ? c.sai / c.luot : 0, who: who };
+    }).sort(function (a, b) { return b.pct - a.pct || b.c.sai - a.c.sai; });
+    if (!list.length) return '<p class="muted">Chưa có dữ liệu.</p>';
+    return '<p class="muted">Bấm vào một câu để xem ai sai. Tự luận tính là sai khi dưới 5 điểm.</p><div class="scroll"><table><thead><tr><th>Câu</th><th>Phần</th><th>Loại</th><th>Nội dung</th><th>Lượt làm</th><th>Lượt sai</th><th>% sai</th></tr></thead><tbody>' +
+      list.map(function (x) {
+        var names = {}; x.who.forEach(function (s) { names[s.ten] = (names[s.ten] || 0) + 1; });
+        var det = Object.keys(names).map(function (t) { return esc(t) + (names[t] > 1 ? ' (' + names[t] + ' lần)' : ''); }).join(', ') || 'Không ai';
+        return '<tr data-cau="' + esc(x.c.id) + '"><td>' + esc(x.c.id) + '</td><td>' + esc(x.c.phan) + '</td><td>' + esc(x.c.loai) + '</td><td>' + esc(x.c.text) + '</td><td>' + x.c.luot + '</td><td>' + x.c.sai + '</td>' +
+          '<td><div class="row" style="flex-wrap:nowrap"><div class="pct"><div style="width:' + Math.round(x.pct * 100) + '%"></div></div><b>' + Math.round(x.pct * 100) + '%</b></div></td></tr>' +
+          '<tr id="det-' + esc(x.c.id) + '" class="hidden"><td colspan="7" style="background:#fafbfd"><b>Người sai:</b> ' + det + '</td></tr>';
+      }).join('') + '</tbody></table></div>';
+  }
+
+  // ----- Ai sai cái gì -----
+  function tWho() {
+    var opts = nvSel().map(function (n) {
+      var c = D.sai.filter(function (s) { return s.ma.toUpperCase() === n.ma.toUpperCase(); }).length;
+      return '<option value="' + esc(n.ma) + '">' + esc(n.ten + ' (' + n.ma + ')') + ' · ' + c + ' câu sai</option>';
+    }).join('');
+    var first = nvSel()[0];
+    return '<div class="row" style="margin-bottom:12px"><select id="whoSel" style="max-width:420px">' + opts + '</select></div><div id="whoBody">' + (first ? whoBody(first.ma) : '') + '</div>';
+  }
+  function whoBody(ma) {
+    var v = $('fPhan').value, cauMap = {};
+    D.cau.forEach(function (c) { cauMap[c.id] = c; });
+    var list = D.sai.filter(function (s) { return s.ma.toUpperCase() === ma.toUpperCase() && (!v || s.phan === v); })
+      .sort(function (a, b) { return (b.tg || 0) - (a.tg || 0); });
+    if (!list.length) return '<p class="muted">Không có câu sai nào.</p>';
+    return '<div class="scroll"><table><thead><tr><th>Thời gian</th><th>Phần</th><th>Câu</th><th>Nội dung</th><th>Đã trả lời</th><th>Đáp án / Nhận xét</th></tr></thead><tbody>' +
+      list.map(function (s) {
+        var c = cauMap[s.id] || {};
+        var right = s.loai === 'TN' ? '<b style="color:var(--green)">' + esc(s.dapAn) + '</b>' : '<span class="badge b-red">' + f(s.diem) + '/10</span> ' + esc(s.nhanXet);
+        var ans = s.loai === 'TN' ? '<b style="color:var(--red)">' + (esc(s.traLoi) || '(bỏ trống)') + '</b>' : '<div style="max-height:120px;overflow:auto;white-space:pre-line">' + esc(s.traLoi) + '</div>';
+        return '<tr><td>' + dt(s.tg) + '</td><td>' + esc(s.phan) + '</td><td>' + esc(s.id) + '</td><td>' + esc(c.text) + '</td><td>' + ans + '</td><td>' + right + '</td></tr>';
+      }).join('') + '</tbody></table></div><p class="muted" style="font-size:13px">Chữ cái đáp án theo thứ tự gốc trong ngân hàng câu hỏi (cột E–H), không phải thứ tự đã trộn trên đề.</p>';
+  }
+
+  // ----- Chưa thi / chưa đạt -----
+  function tNot() {
+    var phans = phansSel(), nvs = nvSel();
+    return phans.map(function (p) {
+      var chua = [], chuaDat = [];
+      nvs.forEach(function (n) {
+        var l = kqOf(n.ma, p.ma);
+        if (!l.length) chua.push(n); else if (!l.some(function (k) { return isDat(k.kq); })) chuaDat.push({ n: n, lan: l.length, best: best(l) });
+      });
+      return '<div class="card" style="padding:14px"><h3>' + esc(p.ma + '. ' + p.ten) + '</h3>' +
+        '<p><span class="badge b-red">Chưa thi: ' + chua.length + '</span> ' + chua.map(function (n) { return esc(n.ten) + ' <span class="muted">(' + esc(n.nhom) + ')</span>'; }).join(', ') + '</p>' +
+        '<p><span class="badge b-amber">Đã thi, chưa đạt: ' + chuaDat.length + '</span> ' + chuaDat.map(function (x) { return esc(x.n.ten) + ' <span class="muted">(' + f(x.best) + 'đ, ' + x.lan + ' lần)</span>'; }).join(', ') + '</p></div>';
+    }).join('') || '<p class="muted">Không có phần thi.</p>';
+  }
+
+  // ----- Lịch sử -----
+  function tLog() {
+    var v = $('fPhan').value, maSet = {};
+    nvSel().forEach(function (n) { maSet[n.ma.toUpperCase()] = 1; });
+    var list = D.ketQua.filter(function (k) { return maSet[k.ma.toUpperCase()] && (!v || k.phan === v); }).sort(function (a, b) { return (b.tg || 0) - (a.tg || 0); });
+    if (!list.length) return '<p class="muted">Chưa có lượt thi.</p>';
+    return '<div class="scroll"><table class="sortable"><thead><tr><th>Thời gian</th><th>Mã NV</th><th>Tên</th><th>Phần</th><th>Lần</th><th>Mã đề</th><th>TN</th><th>TL</th><th>Tổng</th><th>Kết quả</th><th>Phút</th></tr></thead><tbody>' +
+      list.map(function (k) {
+        var cls = isDat(k.kq) ? 'b-green' : (k.tong == null ? 'b-amber' : 'b-red');
+        return '<tr><td data-v="' + (k.tg || 0) + '">' + dt(k.tg) + '</td><td>' + esc(k.ma) + '</td><td>' + esc(k.ten) + '</td><td>' + esc(k.phan) + '</td><td>' + k.lan + '</td><td>' + esc(k.maDe) + '</td><td>' + f(k.tn) + '</td><td>' + f(k.tl) + '</td><td><b>' + f(k.tong) + '</b></td><td><span class="badge ' + cls + '">' + esc(k.kq) + '</span></td><td>' + f(k.phut) + '</td></tr>';
+      }).join('') + '</tbody></table></div>';
+  }
+
+  // ----- Sắp xếp bảng khi bấm tiêu đề -----
+  function bindSort() {
+    Array.prototype.forEach.call(document.querySelectorAll('table.sortable th'), function (th, idx) {
+      th.onclick = function () {
+        var tb = th.closest('table').tBodies[0], rows = Array.prototype.slice.call(tb.rows);
+        var asc = sortState.idx === idx ? !sortState.asc : false; sortState = { idx: idx, asc: asc };
+        function val(tr) { var td = tr.cells[idx]; var v = td.getAttribute('data-v') || td.textContent.trim().replace(',', '.'); var n = parseFloat(v); return isNaN(n) ? v.toLowerCase() : n; }
+        rows.sort(function (a, b) { var x = val(a), y = val(b); return (x > y ? 1 : x < y ? -1 : 0) * (asc ? 1 : -1); });
+        rows.forEach(function (r) { tb.appendChild(r); });
+      };
+    });
+  }
+})();
+</script>
+</body>
+</html>

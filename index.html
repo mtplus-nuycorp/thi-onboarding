@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Thi Onboarding</title>
+<link rel="stylesheet" href="style.css">
+<script src="config.js"></script>
+</head>
+<body>
+<div class="top">
+  <div><h1 id="appName">THI ONBOARDING</h1><small id="appSlogan"></small></div>
+  <div class="row">
+    <span id="maDeTop" class="hidden" style="font-size:13px;opacity:.85"></span>
+    <span id="timer" class="timer hidden">30:00</span>
+  </div>
+</div>
+<div class="progress hidden" id="progWrap"><div id="prog"></div></div>
+
+<div class="wrap">
+  <!-- ĐĂNG NHẬP -->
+  <section id="scLogin" class="card">
+    <h2>Đăng nhập để thi</h2>
+    <p class="muted">Nhập Mã nhân viên của bạn.</p>
+    <form id="fLogin" class="row">
+      <input id="maNV" type="text" class="grow" placeholder="VD: NV001" autocomplete="off" required>
+      <button class="btn" id="btnLogin">Vào thi</button>
+    </form>
+    <div id="errLogin" class="err hidden"></div>
+  </section>
+
+  <!-- CHỌN PHẦN THI -->
+  <section id="scHome" class="hidden">
+    <div class="card">
+      <div class="row"><div class="grow"><h2 id="hello" style="margin:0"></h2><span class="muted" id="helloSub"></span></div>
+      <button class="btn-ghost" id="btnLogout">Đổi người</button></div>
+    </div>
+    <div class="card">
+      <h3>Chọn phần thi</h3>
+      <p class="muted" style="margin-top:0">Mỗi lần thi bạn nhận một mã đề riêng, câu hỏi và đáp án được trộn ngẫu nhiên. Có thể thi lại nhiều lần.</p>
+      <div class="phan-list" id="phanList"></div>
+      <div id="errHome" class="err hidden"></div>
+    </div>
+  </section>
+
+  <!-- LÀM BÀI -->
+  <section id="scExam" class="hidden">
+    <div class="card">
+      <h2 id="examTitle" style="margin-bottom:4px"></h2>
+      <div class="muted" id="examMeta"></div>
+    </div>
+    <div id="qList"></div>
+  </section>
+
+  <!-- ĐANG CHẤM -->
+  <section id="scGrading" class="card center hidden">
+    <div class="spinner"></div>
+    <h3>Đang chấm bài...</h3>
+    <p class="muted">Phần tự luận được AI chấm theo hướng dẫn, mất khoảng 5–20 giây. Đừng tắt trang.</p>
+    <div id="errGrade" class="err hidden"></div>
+    <button class="btn hidden" id="btnRetrySubmit" style="margin-top:12px">Gửi lại bài</button>
+  </section>
+
+  <!-- KẾT QUẢ -->
+  <section id="scResult" class="hidden">
+    <div class="card center">
+      <div class="muted" id="resTitle"></div>
+      <div class="score-big" id="resScore" style="margin:12px 0"></div>
+      <div id="resBadge"></div>
+      <div class="stats" id="resStats"></div>
+      <div class="row" style="justify-content:center;margin-top:18px">
+        <button class="btn" id="btnAgain">Thi lại phần này</button>
+        <button class="btn-ghost" id="btnHome">Về danh sách phần thi</button>
+      </div>
+    </div>
+    <div class="card">
+      <div class="row"><h3 class="grow" style="margin:0">Xem lại bài làm</h3>
+        <label class="row" style="gap:6px;font-size:14px"><input type="checkbox" id="onlyWrong" checked> Chỉ xem câu sai</label></div>
+    </div>
+    <div id="reviewList"></div>
+  </section>
+</div>
+
+<div class="bar-bottom hidden" id="barSubmit">
+  <div class="inner">
+    <span class="muted" id="answeredInfo"></span>
+    <button class="btn-red" id="btnSubmit">Nộp bài</button>
+  </div>
+</div>
+
+<script>
+(function () {
+  var C = window.APP_CONFIG || {};
+  var $ = function (id) { return document.getElementById(id); };
+  var LETTERS = ['A', 'B', 'C', 'D', 'E', 'F'];
+  var state = { nv: null, phans: [], exam: null, answers: [], timerId: null, lastPhan: null, submitting: false };
+
+  $('appName').textContent = C.TEN_CHUONG_TRINH || 'THI ONBOARDING';
+  $('appSlogan').textContent = C.KHAU_HIEU || '';
+  document.title = C.TEN_CHUONG_TRINH || document.title;
+
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+  function show(id) {
+    ['scLogin', 'scHome', 'scExam', 'scGrading', 'scResult'].forEach(function (s) { $(s).classList.toggle('hidden', s !== id); });
+    var exam = id === 'scExam';
+    $('barSubmit').classList.toggle('hidden', !exam);
+    $('timer').classList.toggle('hidden', !exam);
+    $('maDeTop').classList.toggle('hidden', !exam);
+    $('progWrap').classList.toggle('hidden', !exam);
+    window.scrollTo(0, 0);
+  }
+  function err(id, msg) { var el = $(id); el.textContent = msg || ''; el.classList.toggle('hidden', !msg); }
+  function fmtScore(n) { return n == null ? '—' : (Math.round(n * 100) / 100).toString().replace('.', ','); }
+
+  function api(action, data) {
+    if (!C.API_URL || C.API_URL.indexOf('http') !== 0) return Promise.reject(new Error('Chưa cấu hình API_URL trong config.js'));
+    var body = JSON.stringify(Object.assign({ action: action }, data || {}));
+    return fetch(C.API_URL, { method: 'POST', body: body, redirect: 'follow' })
+      .then(function (r) { return r.json(); })
+      .then(function (j) { if (!j.ok) throw new Error(j.error || 'Lỗi không xác định'); return j; });
+  }
+
+  // ---------- Lưu tạm để F5 không mất bài ----------
+  var LS_KEY = 'thi_dang_lam';
+  function saveLocal() { try { localStorage.setItem(LS_KEY, JSON.stringify({ nv: state.nv, exam: state.exam, answers: state.answers })); } catch (e) {} }
+  function clearLocal() { try { localStorage.removeItem(LS_KEY); } catch (e) {} }
+  function loadLocal() { try { return JSON.parse(localStorage.getItem(LS_KEY) || 'null'); } catch (e) { return null; } }
+
+  // ---------- Đăng nhập ----------
+  $('fLogin').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var ma = $('maNV').value.trim();
+    if (!ma) return;
+    $('btnLogin').disabled = true; err('errLogin');
+    login(ma).catch(function (ex) { err('errLogin', ex.message); }).then(function () { $('btnLogin').disabled = false; });
+  });
+
+  function login(ma) {
+    return api('login', { maNV: ma }).then(function (r) {
+      state.nv = r.nv; state.phans = r.phans;
+      try { localStorage.setItem('thi_maNV', r.nv.ma); } catch (e) {}
+      renderHome();
+    });
+  }
+
+  $('btnLogout').onclick = function () { state.nv = null; try { localStorage.removeItem('thi_maNV'); } catch (e) {} $('maNV').value = ''; show('scLogin'); };
+
+  function renderHome() {
+    $('hello').textContent = 'Xin chào ' + state.nv.ten;
+    $('helloSub').textContent = [state.nv.ma, state.nv.nhom, state.nv.duAn].filter(Boolean).join(' · ');
+    var html = state.phans.map(function (p) {
+      var h = p.lichSu || {};
+      var badge = h.lanThi ? (h.dat ? '<span class="badge b-green">ĐÃ ĐẠT</span>' : '<span class="badge b-red">CHƯA ĐẠT</span>') : '<span class="badge b-gray">CHƯA THI</span>';
+      var hist = h.lanThi ? ' · Đã thi ' + h.lanThi + ' lần · Cao nhất ' + fmtScore(h.diemCao) + 'đ' : '';
+      return '<div class="phan"><div><b>' + esc(p.ma + '. ' + p.ten) + '</b> ' + badge +
+        '<div class="meta">' + p.phut + ' phút · ' + p.soTN + ' câu trắc nghiệm · ' + p.soTL + ' câu tự luận · Đạt từ ' + fmtScore(p.diemDat) + 'đ' + hist + '</div></div>' +
+        '<button class="btn" data-phan="' + esc(p.ma) + '">' + (h.lanThi ? 'Thi lại' : 'Bắt đầu') + '</button></div>';
+    }).join('') || '<p class="muted">Chưa có phần thi nào đang mở.</p>';
+    $('phanList').innerHTML = html;
+    Array.prototype.forEach.call($('phanList').querySelectorAll('button[data-phan]'), function (b) {
+      b.onclick = function () { startExam(b.getAttribute('data-phan'), b); };
+    });
+    err('errHome');
+    show('scHome');
+  }
+
+  // ---------- Làm bài ----------
+  function startExam(ma, btn) {
+    var p = state.phans.filter(function (x) { return x.ma === ma; })[0] || { ma: ma, ten: ma, phut: '' };
+    if (!confirm('Bắt đầu phần thi "' + p.ten + '"?\nThời gian: ' + p.phut + ' phút, tính giờ ngay khi bấm OK.')) return;
+    if (btn) btn.disabled = true;
+    err('errHome');
+    api('start', { maNV: state.nv.ma, phan: ma }).then(function (r) {
+      state.lastPhan = ma;
+      state.exam = r;
+      state.answers = r.questions.map(function (q) { return q.loai === 'TN' ? [] : ''; });
+      saveLocal();
+      renderExam();
+    }).catch(function (ex) { err('errHome', ex.message); if (btn) btn.disabled = false; });
+  }
+
+  function renderExam() {
+    var ex = state.exam;
+    $('examTitle').textContent = ex.phan.ma + '. ' + ex.phan.ten;
+    $('examMeta').textContent = 'Mã đề: ' + ex.maDe + ' · ' + ex.questions.length + ' câu · ' + ex.phan.phut + ' phút';
+    $('maDeTop').textContent = ex.maDe;
+    $('qList').innerHTML = ex.questions.map(function (q, i) {
+      var head = '<div class="qh"><span class="num">Câu ' + (i + 1) + (q.loai === 'TL' ? ' (tự luận)' : '') + '.</span> ' + esc(q.text) + '</div>';
+      if (q.loai === 'TN') {
+        return '<div class="q" id="q' + i + '">' + head + '<div class="hint">Có thể có một hoặc nhiều đáp án đúng. Phải chọn đủ và đúng mới được điểm.</div>' +
+          q.options.map(function (o, k) {
+            var checked = state.answers[i].indexOf(k) >= 0;
+            return '<label class="opt' + (checked ? ' sel' : '') + '"><input type="checkbox" data-q="' + i + '" data-k="' + k + '"' + (checked ? ' checked' : '') + '>' +
+              '<span class="letter">' + LETTERS[k] + '.</span><span>' + esc(o) + '</span></label>';
+          }).join('') + '</div>';
+      }
+      return '<div class="q" id="q' + i + '">' + head + '<textarea data-q="' + i + '" placeholder="Viết câu trả lời của bạn...">' + esc(state.answers[i]) + '</textarea></div>';
+    }).join('');
+    Array.prototype.forEach.call($('qList').querySelectorAll('input[type=checkbox]'), function (cb) {
+      cb.onchange = function () {
+        var i = +cb.getAttribute('data-q'), k = +cb.getAttribute('data-k');
+        var arr = state.answers[i].filter(function (x) { return x !== k; });
+        if (cb.checked) arr.push(k);
+        state.answers[i] = arr.sort();
+        cb.parentNode.classList.toggle('sel', cb.checked);
+        saveLocal(); updateAnswered();
+      };
+    });
+    Array.prototype.forEach.call($('qList').querySelectorAll('textarea'), function (ta) {
+      ta.oninput = function () { state.answers[+ta.getAttribute('data-q')] = ta.value; saveLocal(); updateAnswered(); };
+    });
+    updateAnswered();
+    show('scExam');
+    startTimer();
+  }
+
+  function answeredCount() {
+    return state.answers.filter(function (a) { return Array.isArray(a) ? a.length > 0 : String(a).trim().length > 0; }).length;
+  }
+  function updateAnswered() {
+    var n = answeredCount(), t = state.exam.questions.length;
+    $('answeredInfo').textContent = 'Đã làm ' + n + '/' + t + ' câu';
+    $('prog').style.width = (n / t * 100) + '%';
+  }
+
+  function startTimer() {
+    clearInterval(state.timerId);
+    function tick() {
+      var left = Math.max(0, state.exam.hetGio - Date.now());
+      var m = Math.floor(left / 60000), s = Math.floor(left % 60000 / 1000);
+      $('timer').textContent = (m < 10 ? '0' : '') + m + ':' + (s < 10 ? '0' : '') + s;
+      $('timer').classList.toggle('low', left < 5 * 60000);
+      if (left <= 0) { clearInterval(state.timerId); submit(true); }
+    }
+    tick();
+    state.timerId = setInterval(tick, 1000);
+  }
+
+  $('btnSubmit').onclick = function () {
+    var t = state.exam.questions.length, n = answeredCount();
+    var msg = n < t ? 'Bạn còn ' + (t - n) + ' câu chưa làm. Vẫn nộp bài?' : 'Nộp bài ngay?';
+    if (confirm(msg)) submit(false);
+  };
+  $('btnRetrySubmit').onclick = function () { submit(true); };
+
+  function submit(auto) {
+    if (state.submitting) return;
+    state.submitting = true;
+    clearInterval(state.timerId);
+    err('errGrade'); $('btnRetrySubmit').classList.add('hidden');
+    show('scGrading');
+    api('submit', { attemptId: state.exam.attemptId, answers: state.answers }).then(function (r) {
+      clearLocal();
+      state.submitting = false;
+      renderResult(r);
+    }).catch(function (ex) {
+      state.submitting = false;
+      if (/đã nộp/i.test(ex.message)) { clearLocal(); err('errGrade', 'Bài này đã được nộp trước đó. Bạn có thể xem điểm ở trang chủ.'); return; }
+      err('errGrade', 'Chưa gửi được bài: ' + ex.message + '. Bài làm vẫn được giữ trên máy, bấm "Gửi lại bài".');
+      $('btnRetrySubmit').classList.remove('hidden');
+    });
+  }
+
+  // ---------- Kết quả ----------
+  var lastResult = null;
+  function renderResult(r) {
+    lastResult = r;
+    $('resTitle').textContent = r.phan.ma + '. ' + r.phan.ten + ' · ' + r.maDe + ' · Lần thi ' + r.lanThi;
+    var dat = r.ketQua.indexOf('ĐẠT') === 0;
+    $('resScore').innerHTML = r.tong == null ? '<span style="font-size:28px">Chờ chấm tự luận</span>' : fmtScore(r.tong) + '<span style="font-size:24px">/10</span>';
+    $('resScore').className = 'score-big ' + (r.tong == null ? '' : (dat ? 'pass' : 'fail'));
+    $('resBadge').innerHTML = '<span class="badge ' + (r.choCham ? 'b-amber' : (dat ? 'b-green' : 'b-red')) + '" style="font-size:14px;padding:4px 12px">' + esc(r.ketQua) + '</span>' +
+      '<div class="muted" style="margin-top:6px">Điểm đạt: ' + fmtScore(r.diemDat) + ' · Thời gian làm: ' + fmtScore(r.phutLam) + ' phút</div>';
+    var stats = [];
+    if (r.nTN) stats.push('<div class="stat">Trắc nghiệm<b>' + r.dungTN + '/' + r.nTN + ' câu đúng</b><span class="muted">' + fmtScore(r.diemTN) + ' điểm</span></div>');
+    var nTL = r.review.filter(function (x) { return x.loai === 'TL'; }).length;
+    if (nTL) stats.push('<div class="stat">Tự luận<b>' + (r.diemTL == null ? 'Chờ chấm' : fmtScore(r.diemTL) + ' điểm') + '</b><span class="muted">' + nTL + ' câu, AI chấm theo hướng dẫn</span></div>');
+    $('resStats').innerHTML = stats.join('');
+    renderReview();
+    show('scResult');
+  }
+
+  function renderReview() {
+    var r = lastResult, only = $('onlyWrong').checked;
+    var list = r.review.filter(function (q) {
+      if (!only) return true;
+      return q.loai === 'TN' ? !q.dung : (q.diem == null || q.diem < 10);
+    });
+    if (!list.length) { $('reviewList').innerHTML = '<div class="card center muted">Bạn làm đúng hết. Xuất sắc!</div>'; return; }
+    $('reviewList').innerHTML = list.map(function (q) {
+      if (q.loai === 'TN') {
+        var opts = q.options.map(function (o, k) {
+          var chon = q.chon.indexOf(k) >= 0, dung = q.dapAn.indexOf(k) >= 0;
+          var cls = dung ? ' ok' : (chon ? ' bad' : '');
+          var tag = dung && chon ? '<span class="tag" style="color:var(--green)">Bạn chọn · Đúng</span>' :
+            dung ? '<span class="tag" style="color:var(--green)">Đáp án đúng</span>' :
+            chon ? '<span class="tag" style="color:var(--red)">Bạn chọn · Sai</span>' : '';
+          return '<div class="opt' + cls + '"><span class="letter">' + LETTERS[k] + '.</span><span>' + esc(o) + '</span>' + tag + '</div>';
+        }).join('');
+        return '<div class="q"><div class="qh"><span class="num">Câu ' + q.stt + '.</span> ' + esc(q.text) + ' ' +
+          (q.dung ? '<span class="badge b-green">ĐÚNG</span>' : '<span class="badge b-red">SAI</span>') + '</div>' + opts + '</div>';
+      }
+      return '<div class="q"><div class="qh"><span class="num">Câu ' + q.stt + ' (tự luận).</span> ' + esc(q.text) + ' ' +
+        (q.diem == null ? '<span class="badge b-amber">CHỜ CHẤM</span>' : '<span class="badge ' + (q.diem >= 5 ? 'b-green' : 'b-red') + '">' + fmtScore(q.diem) + '/10</span>') + '</div>' +
+        '<div class="hint">Bài làm của bạn:</div><div class="answer-text">' + (esc(q.traLoi) || '<i class="muted">(bỏ trống)</i>') + '</div>' +
+        (q.nhanXet ? '<div class="feedback"><b>Nhận xét:</b> ' + esc(q.nhanXet) + '</div>' : '') + '</div>';
+    }).join('');
+  }
+  $('onlyWrong').onchange = renderReview;
+  $('btnAgain').onclick = function () { startExam(state.lastPhan); };
+  $('btnHome').onclick = function () { login(state.nv.ma).catch(function () { renderHome(); }); };
+
+  // ---------- Khởi động: khôi phục bài đang làm nếu lỡ tải lại trang ----------
+  var saved = loadLocal();
+  if (saved && saved.exam && saved.nv) {
+    state.nv = saved.nv; state.exam = saved.exam; state.answers = saved.answers; state.lastPhan = saved.exam.phan.ma;
+    if (Date.now() < saved.exam.hetGio + 2 * 60000) renderExam();
+    else submit(true);
+  } else {
+    var ma = null; try { ma = localStorage.getItem('thi_maNV'); } catch (e) {}
+    if (ma) { $('maNV').value = ma; login(ma).catch(function () { show('scLogin'); }); }
+  }
+})();
+</script>
+</body>
+</html>
