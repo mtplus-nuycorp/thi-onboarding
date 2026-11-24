@@ -335,8 +335,10 @@ function gradeEssays_(jobs) {
   });
   // Gói miễn phí hay báo "quá tải" (503): thử lần lượt nhiều model cho tới khi chấm được
   var models = [model].concat(FALLBACK_MODELS.filter(function (m) { return m !== model; }));
+  models = models.concat(models);   // chạy 2 vòng, vòng 2 nghỉ 3 giây trước khi thử lại
   var lastErr = '';
   for (var mi = 0; mi < models.length && pending.length; mi++) {
+    if (mi === models.length / 2) Utilities.sleep(3000);
     var res;
     try { res = UrlFetchApp.fetchAll(pending.map(function (j) { return geminiRequest_(key, models[mi], j.q, j.tra); })); }
     catch (e) { res = []; lastErr = e.message; }
@@ -464,7 +466,7 @@ function testGemini_() {
 function apiChamTL(req) {
   var id = norm_(req.attemptId);
   if (!id) throw new Error('Thiếu mã bài');
-  chamLaiCore_(id);
+  chamLaiCore_(id, 6);   // chấm bài này + tranh thủ chấm lại tối đa 6 câu đang chờ của bài khác
   var out = { tl: [], diemTL: null, tong: null, ketQua: '' };
   rows_(SHEET.CHI_TIET).forEach(function (r) {
     if (norm_(r[0]) !== id || key_(r[6]) !== 'TL') return;
@@ -487,20 +489,21 @@ function menuChamLai() {
   SpreadsheetApp.getUi().alert('Đã chấm lại ' + n.cau + ' câu, cập nhật ' + n.bai + ' bài.');
 }
 
-function chamLaiCore_(onlyAttempt) {
+function chamLaiCore_(onlyAttempt, extra) {
   var ct = sh_(SHEET.CHI_TIET);
   var data = ct.getDataRange().getValues();
   var bank = {};
   rows_(SHEET.CAU_HOI).forEach(function (r) { bank[norm_(r[0])] = { text: norm_(r[3]), hd: norm_(r[9]) }; });
-  var jobs = [];
+  var jobs = [], others = [];
   for (var i = 1; i < data.length; i++) {
     var r = data[i];
     if (key_(r[6]) !== 'TL' || r[11] !== '' || norm_(r[13])) continue;
-    if (onlyAttempt && norm_(r[0]) !== onlyAttempt) continue;
     var q = bank[norm_(r[5])];
     if (!q || !q.hd) continue;
-    jobs.push({ q: q, tra: norm_(r[8]), rv: {}, ct: [], row: i + 1 });
+    var job = { q: q, tra: norm_(r[8]), rv: {}, ct: [], row: i + 1 };
+    if (!onlyAttempt || norm_(r[0]) === onlyAttempt) jobs.push(job); else others.push(job);
   }
+  if (onlyAttempt && extra) jobs = jobs.concat(others.slice(0, extra));
   for (var s = 0; s < jobs.length; s += 10) {
     var batch = jobs.slice(s, s + 10);
     gradeEssays_(batch);
