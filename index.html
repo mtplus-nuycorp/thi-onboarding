@@ -68,6 +68,7 @@
       <div class="score-big" id="resScore" style="margin:12px 0"></div>
       <div id="resBadge"></div>
       <div class="stats" id="resStats"></div>
+      <div id="aiNote" class="hidden" style="margin-top:14px;background:var(--amber-bg);color:var(--amber);padding:10px 12px;border-radius:8px;font-size:14px">AI đang chấm phần tự luận, thường mất 10–60 giây. Điểm sẽ tự cập nhật, bạn không cần tải lại trang.</div>
       <div class="row" style="justify-content:center;margin-top:18px">
         <button class="btn" id="btnAgain">Thi lại phần này</button>
         <button class="btn-ghost" id="btnHome">Về danh sách phần thi</button>
@@ -253,6 +254,7 @@
       clearLocal();
       state.submitting = false;
       renderResult(r);
+      chamTuLuan(state.exam.attemptId, r);
     }).catch(function (ex) {
       state.submitting = false;
       if (/đã nộp/i.test(ex.message)) { clearLocal(); err('errGrade', 'Bài này đã được nộp trước đó. Bạn có thể xem điểm ở trang chủ.'); return; }
@@ -278,6 +280,25 @@
     $('resStats').innerHTML = stats.join('');
     renderReview();
     show('scResult');
+  }
+
+  // AI chấm tự luận ngầm sau khi đã hiện điểm trắc nghiệm
+  function chamTuLuan(attemptId, r) {
+    var can = r.review.some(function (q) { return q.loai === 'TL' && q.diem == null; });
+    if (!can) return;
+    $('aiNote').classList.remove('hidden');
+    api('chamTL', { attemptId: attemptId }).then(function (x) {
+      if (lastResult !== r) return;
+      x.tl.forEach(function (t) {
+        r.review.forEach(function (q) { if (q.loai === 'TL' && q.id === t.id) { q.diem = t.diem; q.nhanXet = t.nhanXet; } });
+      });
+      r.diemTL = x.diemTL; r.tong = x.tong; r.ketQua = x.ketQua || r.ketQua; r.choCham = x.choCham;
+      renderResult(r);
+      if (x.choCham) $('aiNote').textContent = 'AI chưa chấm xong (máy chủ AI đang bận). Điểm tự luận sẽ được cập nhật sau, quản lý sẽ thấy trên bảng điểm.';
+      else $('aiNote').classList.add('hidden');
+    }).catch(function () {
+      $('aiNote').textContent = 'AI chưa chấm xong. Điểm tự luận sẽ được cập nhật sau, quản lý sẽ thấy trên bảng điểm.';
+    });
   }
 
   function renderReview() {
