@@ -9,8 +9,6 @@ var SHEET = {
   KET_QUA: 'KET_QUA', CHI_TIET: 'CHI_TIET', PHIEN: 'PHIEN'
 };
 var GRACE_MIN = 3;               // cho phép nộp trễ tối đa 3 phút (mạng chậm)
-var DEFAULT_MODEL = 'gemini-flash-lite-latest';
-var FALLBACK_MODELS = ['gemini-flash-lite-latest', 'gemini-3.1-flash-lite', 'gemini-flash-latest'];
 
 // ================= API =================
 
@@ -21,7 +19,9 @@ function doGet() {
 function doPost(e) {
   try {
     var req = JSON.parse(e.postData.contents);
-    var handlers = { config: apiConfig, login: apiLogin, start: apiStart, submit: apiSubmit, chamTL: apiChamTL, admin: apiAdmin };
+    var handlers = { config: apiConfig, login: apiLogin, start: apiStart, submit: apiSubmit, admin: apiAdmin,
+      // tương thích trang web bản cũ (đang chờ cập nhật): không chấm gì, chỉ báo chờ chấm chéo
+      chamTL: function () { return { tl: [], diemTL: null, tong: null, ketQua: 'CHỜ CHẤM TỰ LUẬN', choCham: true }; } };
     var fn = handlers[req.action];
     if (!fn) throw new Error('Yêu cầu không hợp lệ');
     var out = fn(req);
@@ -61,7 +61,8 @@ function getPhans_() {
     if (!ma) return;
     map[ma] = {
       ma: ma, ten: norm_(r[1]), phut: num_(r[2], 30), soTN: num_(r[3], 0), soTL: num_(r[4], 0),
-      tyTrongTN: num_(r[5], 50), diemDat: num_(r[6], 10), mo: yes_(r[7])
+      tyTrongTN: num_(r[5], 50), diemDat: num_(r[6], 10), mo: yes_(r[7]),
+      boiCanh: String(r[8] == null ? '' : r[8]).split(/\n+/).map(norm_).filter(function (x) { return x; })
     };
   });
   return map;
@@ -94,15 +95,13 @@ function getQuestions_() {
   rows_(SHEET.CAU_HOI).forEach(function (r) {
     var id = norm_(r[0]);
     if (!id || !yes_(r[10])) return;
-    var q = { id: id, phan: key_(r[1]), loai: key_(r[2]), text: norm_(r[3]), opts: [], dapAn: [], hd: norm_(r[9]) };
+    var q = { id: id, phan: key_(r[1]), loai: key_(r[2]), text: norm_(r[3]), opts: [], dapAn: [], hd: norm_(r[9]), bc: yes_(r[12]) };
     for (var i = 0; i < 4; i++) q.opts.push(norm_(r[4 + i]));
     q.dapAn = parseAnswer_(r[8]);
     if (q.loai === 'TN') {
       var nOpt = q.opts.filter(function (o) { return o; }).length;
       if (nOpt < 2 || q.dapAn.length === 0) return;
-    } else if (q.loai === 'TL') {
-      if (!q.hd) return;   // chưa có hướng dẫn chấm -> chưa rút vào đề
-    } else return;
+    } else if (q.loai !== 'TL') return;   // tự luận chấm chéo bằng tay, không cần hướng dẫn chấm mới được rút
     list.push(q);
   });
   return list;
@@ -180,6 +179,10 @@ function apiStart(req) {
   var picked = tn.concat(tl);
   if (!picked.length) throw new Error('Phần thi chưa có câu hỏi');
 
+  // Bối cảnh doanh nghiệp: bốc ngẫu nhiên 1 bối cảnh cho cả đề, dùng cho các câu tự luận có đánh dấu
+  var boiCanh = '';
+  if (p.boiCanh.length && tl.some(function (q) { return q.bc; })) boiCanh = p.boiCanh[Math.floor(Math.random() * p.boiCanh.length)];
+
   var items = [];
   var out = [];
   picked.forEach(function (q, i) {
@@ -190,8 +193,9 @@ function apiStart(req) {
       items.push({ id: q.id, t: 'TN', o: order });
       out.push({ stt: i + 1, loai: 'TN', text: q.text, options: order.map(function (k) { return q.opts[k]; }) });
     } else {
-      items.push({ id: q.id, t: 'TL' });
-      out.push({ stt: i + 1, loai: 'TL', text: q.text });
+      var bc = q.bc ? boiCanh : '';
+      items.push({ id: q.id, t: 'TL', bc: bc });
+      out.push({ stt: i + 1, loai: 'TL', text: q.text + (bc ? '\n\nBối cảnh doanh nghiệp của bạn: ' + bc : '') });
     }
   });
 
@@ -206,7 +210,7 @@ function apiStart(req) {
 
   return {
     attemptId: attemptId, maDe: maDe, phan: { ma: p.ma, ten: p.ten, phut: p.phut },
-    batDau: now.getTime(), hetGio: now.getTime() + p.phut * 60000, questions: out
+    batDau: now.getTime(), hetGio: now.getTime() + p.phut * 60000, boiCanh: boiCanh, questions: out
   };
 }
 
@@ -264,16 +268,16 @@ function apiSubmit(req) {
       var tra = norm_(answers[i]);
       var rv = { stt: i + 1, id: it.id, loai: 'TL', text: q.text, traLoi: tra, diem: null, nhanXet: '' };
       review.push(rv);
-      var ct = [it.id, 'TL', q.text, tra, '', '', '', ''];
+      var ct = [it.id, 'TL', q.text + (it.bc ? '\n[Bối cảnh: ' + it.bc + ']' : ''), tra, '', '', '', ''];
       chiTiet.push(ct);
       tlJobs.push({ q: q, tra: tra, rv: rv, ct: ct });
     }
   });
 
-  // --- Tự luận: AI chấm ngầm ở lệnh chamTL ngay sau khi nộp, để người thi có điểm trắc nghiệm ngay ---
+  // --- Tự luận: chấm chéo bằng tay (điền cột "Điểm chấm chéo" trong CHI_TIET rồi menu Tính lại điểm) ---
   tlJobs.forEach(function (j) {
     if (!j.tra) setTL_(j, 0, 'Bỏ trống, không trả lời.');
-    else setTL_(j, null, 'AI đang chấm...');
+    else setTL_(j, null, '');
   });
 
   var diemTN = nTN ? round2_(dungTN / nTN * 10) : null;
@@ -304,10 +308,13 @@ function apiSubmit(req) {
     if (ctRows.length) ctSh.getRange(ctSh.getLastRow() + 1, 1, ctRows.length, 14).setValues(ctRows);
   } finally { lock.releaseLock(); }
 
+  // Không trả đáp án hay câu đúng/sai về cho thí sinh, chỉ trả điểm tổng
   return {
     maDe: maDe, phan: { ma: p.ma, ten: p.ten }, lanThi: lanThi, phutLam: phutLam,
-    diemTN: diemTN, dungTN: dungTN, nTN: nTN, diemTL: diemTL, tong: tong,
-    diemDat: p.diemDat, ketQua: ketQua, choCham: choCham, review: review
+    diemTN: diemTN, dungTN: dungTN, nTN: nTN, nTL: tlJobs.length, diemTL: diemTL, tong: tong,
+    diemDat: p.diemDat, ketQua: ketQua, choCham: choCham,
+    // tương thích trang web bản cũ: chỉ gửi lại bài tự luận của chính thí sinh, không có đáp án
+    review: review.filter(function (x) { return x.loai === 'TL'; }).map(function (x) { return { stt: x.stt, id: x.id, loai: 'TL', text: x.text, traLoi: x.traLoi, diem: x.diem, nhanXet: '' }; })
   };
 }
 
@@ -321,69 +328,11 @@ function tinhTong_(diemTN, diemTL, coTL, choCham, tyTrongTN) {
 
 function lettersOf_(arr) { return arr.map(function (g) { return 'ABCD'.charAt(g); }).join(','); }
 
-/** Chấm nhiều bài tự luận song song. Ghi điểm vào job.rv và job.ct. */
-function gradeEssays_(jobs) {
-  if (!jobs.length) return;
-  var props = PropertiesService.getScriptProperties();
-  var key = props.getProperty('GEMINI_API_KEY');
-  var model = props.getProperty('GEMINI_MODEL') || DEFAULT_MODEL;
-  var pending = [];
-  jobs.forEach(function (j) {
-    if (!j.tra) { setTL_(j, 0, 'Bỏ trống, không trả lời.'); return; }
-    if (!key) { setTL_(j, null, 'Chưa cài API key chấm tự động, chờ chấm chéo.'); return; }
-    pending.push(j);
-  });
-  // Gói miễn phí hay báo "quá tải" (503): thử lần lượt nhiều model cho tới khi chấm được
-  var models = [model].concat(FALLBACK_MODELS.filter(function (m) { return m !== model; }));
-  models = models.concat(models);   // chạy 2 vòng, vòng 2 nghỉ 3 giây trước khi thử lại
-  var lastErr = '';
-  for (var mi = 0; mi < models.length && pending.length; mi++) {
-    if (mi === models.length / 2) Utilities.sleep(3000);
-    var res;
-    try { res = UrlFetchApp.fetchAll(pending.map(function (j) { return geminiRequest_(key, models[mi], j.q, j.tra); })); }
-    catch (e) { res = []; lastErr = e.message; }
-    var still = [];
-    pending.forEach(function (j, k) {
-      try {
-        var r = res[k];
-        if (!r || r.getResponseCode() !== 200) throw new Error('HTTP ' + (r ? r.getResponseCode() : 'loi'));
-        var body = JSON.parse(r.getContentText());
-        var txt = body.candidates[0].content.parts.map(function (pt) { return pt.text || ''; }).join('');
-        var g = JSON.parse(txt);
-        var d = Math.max(0, Math.min(10, Number(g.diem)));
-        if (isNaN(d)) throw new Error('Không đọc được điểm');
-        setTL_(j, round2_(d), norm_(g.nhanXet));
-      } catch (e) { lastErr = e.message; still.push(j); }
-    });
-    pending = still;
-  }
-  pending.forEach(function (j) { setTL_(j, null, 'Lỗi chấm tự động (' + lastErr + '), chờ chấm chéo.'); });
-}
-
 function setTL_(j, diem, nhanXet) {
   j.rv.diem = diem; j.rv.nhanXet = nhanXet;
   j.ct[5] = diem == null ? 'CHỜ CHẤM' : (diem >= 5 ? 'ĐẠT Ý' : 'THIẾU Ý');
   j.ct[6] = diem == null ? '' : diem;
   j.ct[7] = nhanXet;
-}
-
-function geminiRequest_(key, model, q, traLoi) {
-  var prompt =
-    'Bạn là giám khảo chấm bài tự luận nội bộ cho Trưởng phòng/Trưởng nhóm Marketing.\n' +
-    'Chấm câu trả lời theo HƯỚNG DẪN CHẤM. Mỗi ý trong hướng dẫn có trọng số ngang nhau. ' +
-    'Cho điểm theo mức độ đầy đủ và đúng ý, chấp nhận cách diễn đạt khác nghĩa tương đương. ' +
-    'Ví dụ cụ thể, sát thực tế được cộng điểm. Trả lời lan man, sai ý hoặc chép lại đề thì không có điểm.\n\n' +
-    'CÂU HỎI:\n' + q.text + '\n\nHƯỚNG DẪN CHẤM:\n' + q.hd + '\n\nBÀI LÀM:\n' + traLoi + '\n\n' +
-    'Trả về JSON: {"diem": số từ 0 đến 10 (có thể lẻ 0.5), "nhanXet": "1-3 câu tiếng Việt: đạt ý nào, thiếu ý nào"}';
-  return {
-    url: 'https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(model) + ':generateContent',
-    method: 'post', contentType: 'application/json', muteHttpExceptions: true,
-    headers: { 'x-goog-api-key': key },
-    payload: JSON.stringify({
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.2, responseMimeType: 'application/json' }
-    })
-  };
 }
 
 // ================= API: QUẢN LÝ =================
@@ -432,87 +381,17 @@ function apiAdmin(req) {
 
 function onOpen() {
   SpreadsheetApp.getUi().createMenu('Tool thi')
-    .addItem('Cài đặt (API key chấm tự luận, mật khẩu quản lý)', 'menuCaiDat')
-    .addItem('Chấm lại các câu tự luận đang chờ', 'menuChamLai')
+    .addItem('Đổi mật khẩu trang quản lý', 'menuCaiDat')
     .addItem('Tính lại điểm sau khi chấm chéo', 'menuTinhLai')
     .addToUi();
 }
 
 function menuCaiDat() {
   var ui = SpreadsheetApp.getUi();
-  var props = PropertiesService.getScriptProperties();
-  var r1 = ui.prompt('API key Gemini', 'Dán API key lấy ở aistudio.google.com (bỏ trống để giữ nguyên):', ui.ButtonSet.OK_CANCEL);
-  if (r1.getSelectedButton() !== ui.Button.OK) return;
-  if (norm_(r1.getResponseText())) props.setProperty('GEMINI_API_KEY', norm_(r1.getResponseText()));
-  var r2 = ui.prompt('Mật khẩu trang quản lý', 'Đặt mật khẩu để xem trang quản lý (bỏ trống để giữ nguyên):', ui.ButtonSet.OK_CANCEL);
-  if (r2.getSelectedButton() !== ui.Button.OK) return;
-  if (norm_(r2.getResponseText())) props.setProperty('ADMIN_PASSWORD', norm_(r2.getResponseText()));
-  var r3 = ui.prompt('Model AI (không bắt buộc)', 'Mặc định: ' + DEFAULT_MODEL + '. Bỏ trống để giữ nguyên:', ui.ButtonSet.OK_CANCEL);
-  if (r3.getSelectedButton() === ui.Button.OK && norm_(r3.getResponseText())) props.setProperty('GEMINI_MODEL', norm_(r3.getResponseText()));
-  var test = testGemini_();
-  ui.alert('Đã lưu cài đặt.\n\nKiểm tra AI chấm bài: ' + test);
-}
-
-function testGemini_() {
-  var props = PropertiesService.getScriptProperties();
-  var key = props.getProperty('GEMINI_API_KEY');
-  if (!key) return 'chưa có API key (tự luận sẽ chờ chấm chéo)';
-  var job = { q: { text: 'Khoe CDN mấy lần một tuần?', hd: 'Khoe 3 lần/tuần' }, tra: '3 lần mỗi tuần', rv: {}, ct: [] };
-  gradeEssays_([job]);
-  return job.rv.diem == null ? 'LỖI - ' + job.rv.nhanXet : 'OK (bài mẫu được ' + job.rv.diem + ' điểm)';
-}
-
-/** Web gọi ngay sau khi nộp: AI chấm các câu tự luận của bài này, trả điểm mới. */
-function apiChamTL(req) {
-  var id = norm_(req.attemptId);
-  if (!id) throw new Error('Thiếu mã bài');
-  chamLaiCore_(id, 6);   // chấm bài này + tranh thủ chấm lại tối đa 6 câu đang chờ của bài khác
-  var out = { tl: [], diemTL: null, tong: null, ketQua: '' };
-  rows_(SHEET.CHI_TIET).forEach(function (r) {
-    if (norm_(r[0]) !== id || key_(r[6]) !== 'TL') return;
-    var d = norm_(r[13]) !== '' ? Number(r[13]) : (r[11] === '' ? null : Number(r[11]));
-    out.tl.push({ id: norm_(r[5]), diem: d, nhanXet: norm_(r[12]) });
-  });
-  rows_(SHEET.KET_QUA).forEach(function (r) {
-    if (norm_(r[13]) !== id) return;
-    out.diemTL = r[9] === '' ? null : Number(r[9]);
-    out.tong = r[10] === '' ? null : Number(r[10]);
-    out.ketQua = norm_(r[11]);
-  });
-  out.choCham = out.tong == null;
-  return out;
-}
-
-/** Chấm lại câu TL chưa có điểm (do lỗi mạng/AI), sau đó tính lại tổng. */
-function menuChamLai() {
-  var n = chamLaiCore_(null);
-  SpreadsheetApp.getUi().alert('Đã chấm lại ' + n.cau + ' câu, cập nhật ' + n.bai + ' bài.');
-}
-
-function chamLaiCore_(onlyAttempt, extra) {
-  var ct = sh_(SHEET.CHI_TIET);
-  var data = ct.getDataRange().getValues();
-  var bank = {};
-  rows_(SHEET.CAU_HOI).forEach(function (r) { bank[norm_(r[0])] = { text: norm_(r[3]), hd: norm_(r[9]) }; });
-  var jobs = [], others = [];
-  for (var i = 1; i < data.length; i++) {
-    var r = data[i];
-    if (key_(r[6]) !== 'TL' || r[11] !== '' || norm_(r[13])) continue;
-    var q = bank[norm_(r[5])];
-    if (!q || !q.hd) continue;
-    var job = { q: q, tra: norm_(r[8]), rv: {}, ct: [], row: i + 1 };
-    if (!onlyAttempt || norm_(r[0]) === onlyAttempt) jobs.push(job); else others.push(job);
-  }
-  if (onlyAttempt && extra) jobs = jobs.concat(others.slice(0, extra));
-  for (var s = 0; s < jobs.length; s += 10) {
-    var batch = jobs.slice(s, s + 10);
-    gradeEssays_(batch);
-    batch.forEach(function (j) {
-      ct.getRange(j.row, 11, 1, 3).setValues([[j.ct[5], j.ct[6], j.ct[7]]]);
-    });
-  }
-  var n = tinhLaiTatCa_();
-  return { cau: jobs.length, bai: n };
+  var r = ui.prompt('Mật khẩu trang quản lý', 'Nhập mật khẩu mới (bỏ trống để giữ nguyên):', ui.ButtonSet.OK_CANCEL);
+  if (r.getSelectedButton() !== ui.Button.OK || !norm_(r.getResponseText())) return;
+  PropertiesService.getScriptProperties().setProperty('ADMIN_PASSWORD', norm_(r.getResponseText()));
+  ui.alert('Đã đổi mật khẩu.');
 }
 
 function menuTinhLai() {

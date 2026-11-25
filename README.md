@@ -1,6 +1,9 @@
 # Tool thi Onboarding TP/TN
 
-Web thi trắc nghiệm và tự luận. Mỗi người nhận một mã đề riêng, câu hỏi và đáp án được trộn ngẫu nhiên. Nộp bài xong có điểm ngay. Đáp án chỉ nằm trong Google Sheet, web không chứa đáp án.
+Web thi trắc nghiệm và tự luận. Mỗi người nhận một mã đề riêng, câu hỏi và đáp án được trộn ngẫu nhiên. Nộp bài xong chỉ hiện điểm trắc nghiệm, không hiện đáp án. Tự luận chấm chéo bằng tay trong Sheet.
+
+- Link phần 1–3: `.../thi-onboarding/?phan=P1,P2,P3`
+- Link phần 4–5: `.../thi-onboarding/?phan=P4,P5`
 
 - `index.html`: trang thi, gửi link này cho anh em.
 - `admin.html`: trang quản lý (bảng điểm, xếp hạng, câu sai nhiều nhất, ai sai cái gì, ai chưa thi). Cần mật khẩu.
@@ -19,11 +22,6 @@ Web thi trắc nghiệm và tự luận. Mỗi người nhận một mã đề r
 5. Bấm **Triển khai**, cấp quyền khi Google hỏi (chọn tài khoản → Nâng cao → Đi tới dự án → Cho phép).
 6. Sao chép **URL ứng dụng web** (dạng `https://script.google.com/macros/s/.../exec`).
 
-### Bước 2. Lấy API key chấm tự luận (miễn phí)
-1. Vào https://aistudio.google.com/apikey, đăng nhập Google, bấm **Create API key**, sao chép key.
-2. Quay lại Google Sheet, tải lại trang. Trên thanh menu xuất hiện mục **Tool thi → Cài đặt**.
-3. Dán API key, đặt mật khẩu trang quản lý. Cuối cùng Sheet báo "Kiểm tra AI chấm bài: OK" là xong.
-
 ### Bước 3. Đưa web lên GitHub Pages
 1. Mở `config.js`, thay `DAN_LINK_APPS_SCRIPT_VAO_DAY` bằng URL ở Bước 1. Sửa tên chương trình nếu muốn.
 2. Trên GitHub bấm **New repository**, đặt tên (vd `thi-onboarding`), chọn **Public**, bấm **Create repository**.
@@ -41,18 +39,17 @@ Repo để Public vẫn an toàn: trong 4 file này không có đáp án hay hư
 |---|---|
 | Thêm, sửa câu hỏi, đáp án | Tab `CAU_HOI`. Đáp án ghi chữ cái, nhiều đáp án cách nhau dấu phẩy (vd `B,D`). |
 | Tạm ẩn một câu | Cột "Đang dùng" chọn `KHÔNG` |
-| Câu tự luận | Phải có "Hướng dẫn chấm" thì mới được rút vào đề |
+| Bối cảnh doanh nghiệp | Tab `PHAN_THI` cột I (mỗi dòng 1 bối cảnh). Câu tự luận nào dùng bối cảnh thì cột M tab `CAU_HOI` = `CÓ` |
 | Đổi thời gian, số câu, điểm đạt | Tab `PHAN_THI` |
 | Mở/đóng phần thi | Tab `PHAN_THI`, cột "Mở thi" |
 | Thêm người thi | Tab `NHAN_VIEN` (Mã NV + Tên, "Đang hoạt động" = `CÓ`) |
 | Chấm chéo, sửa điểm tự luận | Tab `CHI_TIET`, cột "Điểm chấm chéo", rồi menu **Tool thi → Tính lại điểm** |
-| AI lỗi, bài đang "Chờ chấm" | Menu **Tool thi → Chấm lại các câu tự luận đang chờ** |
 
 Sửa Sheet xong là web cập nhật ngay, không cần triển khai lại.
 Chỉ khi sửa `Code.gs` mới cần: **Triển khai → Quản lý các bản triển khai → Sửa (bút chì) → Phiên bản mới → Triển khai**. URL giữ nguyên.
 
 ## Cách tính điểm
 - Trắc nghiệm: chọn đủ và đúng tất cả đáp án mới được điểm câu đó. Điểm TN = số câu đúng / tổng câu × 10.
-- Tự luận: AI chấm 0–10 theo hướng dẫn chấm, có nhận xét thiếu ý nào. Điểm TL = trung bình các câu.
+- Tự luận: người chấm chéo điền điểm 0–10 vào cột "Điểm chấm chéo" tab `CHI_TIET`. Điểm TL = trung bình các câu.
 - Tổng = TN × tỷ trọng + TL × (1 − tỷ trọng). Tỷ trọng đặt ở tab `PHAN_THI`.
 - Tổng ≥ "Điểm đạt" là ĐẠT. Nộp quá giờ hơn 3 phút sẽ ghi chú "(nộp trễ)".

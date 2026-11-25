@@ -37,7 +37,7 @@
     </div>
     <div class="card">
       <h3>Chọn phần thi</h3>
-      <p class="muted" style="margin-top:0">Mỗi lần thi bạn nhận một mã đề riêng, câu hỏi và đáp án được trộn ngẫu nhiên. Có thể thi lại nhiều lần.</p>
+      <p class="muted" style="margin-top:0">Mỗi lần thi bạn nhận một mã đề riêng, câu hỏi và đáp án được trộn ngẫu nhiên. Có thể thi lại nhiều lần. Sau khi nộp chỉ hiện điểm, không hiện đáp án.</p>
       <div class="phan-list" id="phanList"></div>
       <div id="errHome" class="err hidden"></div>
     </div>
@@ -55,8 +55,8 @@
   <!-- ĐANG CHẤM -->
   <section id="scGrading" class="card center hidden">
     <div class="spinner"></div>
-    <h3>Đang chấm bài...</h3>
-    <p class="muted">Phần tự luận được AI chấm theo hướng dẫn, mất khoảng 5–20 giây. Đừng tắt trang.</p>
+    <h3>Đang nộp bài...</h3>
+    <p class="muted">Mất khoảng 5 giây. Đừng tắt trang.</p>
     <div id="errGrade" class="err hidden"></div>
     <button class="btn hidden" id="btnRetrySubmit" style="margin-top:12px">Gửi lại bài</button>
   </section>
@@ -68,17 +68,12 @@
       <div class="score-big" id="resScore" style="margin:12px 0"></div>
       <div id="resBadge"></div>
       <div class="stats" id="resStats"></div>
-      <div id="aiNote" class="hidden" style="margin-top:14px;background:var(--amber-bg);color:var(--amber);padding:10px 12px;border-radius:8px;font-size:14px">AI đang chấm phần tự luận, thường mất 10–60 giây. Điểm sẽ tự cập nhật, bạn không cần tải lại trang.</div>
+      <div id="tlNote" class="hidden" style="margin-top:14px;background:var(--amber-bg);color:var(--amber);padding:10px 12px;border-radius:8px;font-size:14px">Phần tự luận sẽ được chấm chéo. Điểm tổng và kết quả cuối cùng sẽ được quản lý thông báo sau.</div>
       <div class="row" style="justify-content:center;margin-top:18px">
         <button class="btn" id="btnAgain">Thi lại phần này</button>
         <button class="btn-ghost" id="btnHome">Về danh sách phần thi</button>
       </div>
     </div>
-    <div class="card">
-      <div class="row"><h3 class="grow" style="margin:0">Xem lại bài làm</h3>
-        <label class="row" style="gap:6px;font-size:14px"><input type="checkbox" id="onlyWrong" checked> Chỉ xem câu sai</label></div>
-    </div>
-    <div id="reviewList"></div>
   </section>
 </div>
 
@@ -94,6 +89,9 @@
   var C = window.APP_CONFIG || {};
   var $ = function (id) { return document.getElementById(id); };
   var LETTERS = ['A', 'B', 'C', 'D', 'E', 'F'];
+  // Mỗi link chỉ hiện một nhóm phần thi, vd ?phan=P1,P2,P3
+  var CHI_PHAN = (new URLSearchParams(location.search).get('phan') || '').toUpperCase().split(',').map(function (x) { return x.trim(); }).filter(Boolean);
+  if (!CHI_PHAN.length) CHI_PHAN = null;
   var state = { nv: null, phans: [], exam: null, answers: [], timerId: null, lastPhan: null, submitting: false };
 
   $('appName').textContent = C.TEN_CHUONG_TRINH || 'THI ONBOARDING';
@@ -138,7 +136,7 @@
 
   function login(ma) {
     return api('login', { maNV: ma }).then(function (r) {
-      state.nv = r.nv; state.phans = r.phans;
+      state.nv = r.nv; state.phans = r.phans.filter(function (p) { return !CHI_PHAN || CHI_PHAN.indexOf(p.ma) >= 0; });
       try { localStorage.setItem('thi_maNV', r.nv.ma); } catch (e) {}
       renderHome();
     });
@@ -183,7 +181,8 @@
   function renderExam() {
     var ex = state.exam;
     $('examTitle').textContent = ex.phan.ma + '. ' + ex.phan.ten;
-    $('examMeta').textContent = 'Mã đề: ' + ex.maDe + ' · ' + ex.questions.length + ' câu · ' + ex.phan.phut + ' phút';
+    $('examMeta').innerHTML = esc('Mã đề: ' + ex.maDe + ' · ' + ex.questions.length + ' câu · ' + ex.phan.phut + ' phút') +
+      (ex.boiCanh ? '<div style="margin-top:10px;background:#eef3fc;border-left:3px solid var(--navy-2);padding:10px 12px;border-radius:6px;color:var(--text)"><b>Bối cảnh doanh nghiệp của bạn:</b> ' + esc(ex.boiCanh) + '<br><span class="muted" style="font-size:13px">Làm các câu tự luận có ghi bối cảnh theo đúng doanh nghiệp này.</span></div>' : '');
     $('maDeTop').textContent = ex.maDe;
     $('qList').innerHTML = ex.questions.map(function (q, i) {
       var head = '<div class="qh"><span class="num">Câu ' + (i + 1) + (q.loai === 'TL' ? ' (tự luận)' : '') + '.</span> ' + esc(q.text) + '</div>';
@@ -254,7 +253,6 @@
       clearLocal();
       state.submitting = false;
       renderResult(r);
-      chamTuLuan(state.exam.attemptId, r);
     }).catch(function (ex) {
       state.submitting = false;
       if (/đã nộp/i.test(ex.message)) { clearLocal(); err('errGrade', 'Bài này đã được nộp trước đó. Bạn có thể xem điểm ở trang chủ.'); return; }
@@ -266,68 +264,25 @@
   // ---------- Kết quả ----------
   var lastResult = null;
   function renderResult(r) {
-    lastResult = r;
     $('resTitle').textContent = r.phan.ma + '. ' + r.phan.ten + ' · ' + r.maDe + ' · Lần thi ' + r.lanThi;
     var dat = r.ketQua.indexOf('ĐẠT') === 0;
-    $('resScore').innerHTML = r.tong == null ? '<span style="font-size:28px">Chờ chấm tự luận</span>' : fmtScore(r.tong) + '<span style="font-size:24px">/10</span>';
-    $('resScore').className = 'score-big ' + (r.tong == null ? '' : (dat ? 'pass' : 'fail'));
+    if (r.tong == null) {
+      $('resScore').innerHTML = (r.nTN ? fmtScore(r.diemTN) + '<span style="font-size:24px">/10 trắc nghiệm</span>' : '<span style="font-size:28px">Đã nộp bài</span>');
+      $('resScore').className = 'score-big';
+    } else {
+      $('resScore').innerHTML = fmtScore(r.tong) + '<span style="font-size:24px">/10</span>';
+      $('resScore').className = 'score-big ' + (dat ? 'pass' : 'fail');
+    }
     $('resBadge').innerHTML = '<span class="badge ' + (r.choCham ? 'b-amber' : (dat ? 'b-green' : 'b-red')) + '" style="font-size:14px;padding:4px 12px">' + esc(r.ketQua) + '</span>' +
       '<div class="muted" style="margin-top:6px">Điểm đạt: ' + fmtScore(r.diemDat) + ' · Thời gian làm: ' + fmtScore(r.phutLam) + ' phút</div>';
     var stats = [];
     if (r.nTN) stats.push('<div class="stat">Trắc nghiệm<b>' + r.dungTN + '/' + r.nTN + ' câu đúng</b><span class="muted">' + fmtScore(r.diemTN) + ' điểm</span></div>');
-    var nTL = r.review.filter(function (x) { return x.loai === 'TL'; }).length;
-    if (nTL) stats.push('<div class="stat">Tự luận<b>' + (r.diemTL == null ? 'Chờ chấm' : fmtScore(r.diemTL) + ' điểm') + '</b><span class="muted">' + nTL + ' câu, AI chấm theo hướng dẫn</span></div>');
+    if (r.nTL) stats.push('<div class="stat">Tự luận<b>' + (r.diemTL == null ? 'Chờ chấm chéo' : fmtScore(r.diemTL) + ' điểm') + '</b><span class="muted">' + r.nTL + ' câu</span></div>');
     $('resStats').innerHTML = stats.join('');
-    renderReview();
+    $('tlNote').classList.toggle('hidden', !r.choCham);
     show('scResult');
   }
 
-  // AI chấm tự luận ngầm sau khi đã hiện điểm trắc nghiệm
-  function chamTuLuan(attemptId, r) {
-    var can = r.review.some(function (q) { return q.loai === 'TL' && q.diem == null; });
-    if (!can) return;
-    $('aiNote').classList.remove('hidden');
-    api('chamTL', { attemptId: attemptId }).then(function (x) {
-      if (lastResult !== r) return;
-      x.tl.forEach(function (t) {
-        r.review.forEach(function (q) { if (q.loai === 'TL' && q.id === t.id) { q.diem = t.diem; q.nhanXet = t.nhanXet; } });
-      });
-      r.diemTL = x.diemTL; r.tong = x.tong; r.ketQua = x.ketQua || r.ketQua; r.choCham = x.choCham;
-      renderResult(r);
-      if (x.choCham) $('aiNote').textContent = 'AI chưa chấm xong (máy chủ AI đang bận). Điểm tự luận sẽ được cập nhật sau, quản lý sẽ thấy trên bảng điểm.';
-      else $('aiNote').classList.add('hidden');
-    }).catch(function () {
-      $('aiNote').textContent = 'AI chưa chấm xong. Điểm tự luận sẽ được cập nhật sau, quản lý sẽ thấy trên bảng điểm.';
-    });
-  }
-
-  function renderReview() {
-    var r = lastResult, only = $('onlyWrong').checked;
-    var list = r.review.filter(function (q) {
-      if (!only) return true;
-      return q.loai === 'TN' ? !q.dung : (q.diem == null || q.diem < 10);
-    });
-    if (!list.length) { $('reviewList').innerHTML = '<div class="card center muted">Bạn làm đúng hết. Xuất sắc!</div>'; return; }
-    $('reviewList').innerHTML = list.map(function (q) {
-      if (q.loai === 'TN') {
-        var opts = q.options.map(function (o, k) {
-          var chon = q.chon.indexOf(k) >= 0, dung = q.dapAn.indexOf(k) >= 0;
-          var cls = dung ? ' ok' : (chon ? ' bad' : '');
-          var tag = dung && chon ? '<span class="tag" style="color:var(--green)">Bạn chọn · Đúng</span>' :
-            dung ? '<span class="tag" style="color:var(--green)">Đáp án đúng</span>' :
-            chon ? '<span class="tag" style="color:var(--red)">Bạn chọn · Sai</span>' : '';
-          return '<div class="opt' + cls + '"><span class="letter">' + LETTERS[k] + '.</span><span>' + esc(o) + '</span>' + tag + '</div>';
-        }).join('');
-        return '<div class="q"><div class="qh"><span class="num">Câu ' + q.stt + '.</span> ' + esc(q.text) + ' ' +
-          (q.dung ? '<span class="badge b-green">ĐÚNG</span>' : '<span class="badge b-red">SAI</span>') + '</div>' + opts + '</div>';
-      }
-      return '<div class="q"><div class="qh"><span class="num">Câu ' + q.stt + ' (tự luận).</span> ' + esc(q.text) + ' ' +
-        (q.diem == null ? '<span class="badge b-amber">CHỜ CHẤM</span>' : '<span class="badge ' + (q.diem >= 5 ? 'b-green' : 'b-red') + '">' + fmtScore(q.diem) + '/10</span>') + '</div>' +
-        '<div class="hint">Bài làm của bạn:</div><div class="answer-text">' + (esc(q.traLoi) || '<i class="muted">(bỏ trống)</i>') + '</div>' +
-        (q.nhanXet ? '<div class="feedback"><b>Nhận xét:</b> ' + esc(q.nhanXet) + '</div>' : '') + '</div>';
-    }).join('');
-  }
-  $('onlyWrong').onchange = renderReview;
   $('btnAgain').onclick = function () { startExam(state.lastPhan); };
   $('btnHome').onclick = function () { login(state.nv.ma).catch(function () { renderHome(); }); };
 
