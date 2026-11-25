@@ -29,7 +29,8 @@
         <label>Nhóm <select id="fNhom" style="width:auto"></select></label>
       </div>
       <div class="tabs">
-        <button class="tab on" data-tab="rank">Bảng điểm & xếp hạng</button>
+        <button class="tab on" data-tab="cham">Chấm tự luận</button>
+        <button class="tab" data-tab="rank">Bảng điểm & xếp hạng</button>
         <button class="tab" data-tab="hard">Câu sai nhiều nhất</button>
         <button class="tab" data-tab="who">Ai sai cái gì</button>
         <button class="tab" data-tab="not">Ai chưa thi / chưa đạt</button>
@@ -44,7 +45,7 @@
 (function () {
   var C = window.APP_CONFIG || {};
   var $ = function (id) { return document.getElementById(id); };
-  var D = null, tab = 'rank', sortState = {};
+  var D = null, tab = 'cham', sortState = {}, DS = null;
   $('appName').textContent = 'QUẢN LÝ · ' + (C.TEN_CHUONG_TRINH || 'THI');
 
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
@@ -74,7 +75,7 @@
     $('errPass').classList.add('hidden');
     load($('pass').value).catch(function (ex) { $('errPass').textContent = ex.message; $('errPass').classList.remove('hidden'); });
   };
-  $('btnReload').onclick = function () { var p = sessionStorage.getItem('admin_pass'); if (p) load(p).catch(function (ex) { alert(ex.message); }); };
+  $('btnReload').onclick = function () { DS = null; var p = sessionStorage.getItem('admin_pass'); if (p) load(p).catch(function (ex) { alert(ex.message); }); };
   var saved = null; try { saved = sessionStorage.getItem('admin_pass'); } catch (e) {}
   if (saved) load(saved).catch(function () {});
 
@@ -102,9 +103,10 @@
 
   function render() {
     renderOverview();
-    var fn = { rank: tRank, hard: tHard, who: tWho, not: tNot, log: tLog }[tab];
+    var fn = { cham: tCham, rank: tRank, hard: tHard, who: tWho, not: tNot, log: tLog }[tab];
     $('tabBody').innerHTML = fn();
     bindSort();
+    if (tab === 'cham') loadCham();
     if (tab === 'who') { $('whoSel').onchange = function () { $('whoBody').innerHTML = whoBody($('whoSel').value); }; }
     if (tab === 'hard') {
       Array.prototype.forEach.call(document.querySelectorAll('[data-cau]'), function (tr) {
@@ -128,6 +130,57 @@
       '<div class="stat">Đã thi (người × phần)<b>' + nThi + '/' + can + '</b></div>' +
       '<div class="stat">Đã đạt (người × phần)<b>' + nDat + '/' + can + '</b></div>' +
       '<div class="stat">Chưa thi<b style="color:var(--red)">' + (can - nThi) + '</b></div>';
+  }
+
+  // ----- Chấm tự luận -----
+  function pass() { try { return sessionStorage.getItem('admin_pass') || ''; } catch (e) { return ''; } }
+  function tCham() {
+    return '<div class="row" style="margin-bottom:12px"><label class="row" style="gap:6px"><input type="checkbox" id="chiChua" checked> Chỉ hiện bài chưa chấm</label>' +
+      '<span class="muted" id="chamCount"></span></div><div id="chamBody"><div class="spinner"></div></div>';
+  }
+  function loadCham() {
+    var draw = function () { if ($('chamBody')) drawCham(); };
+    $('chiChua').onchange = draw;
+    if (DS) { draw(); }
+    api({ action: 'dsTuLuan', password: pass() }).then(function (r) { DS = r.list; draw(); })
+      .catch(function (ex) { if ($('chamBody')) $('chamBody').innerHTML = '<div class="err">' + esc(ex.message) + '</div>'; });
+  }
+  function drawCham() {
+    if (!DS) return;
+    var v = $('fPhan').value, chi = $('chiChua').checked, maSet = {};
+    nvSel().forEach(function (n) { maSet[n.ma.toUpperCase()] = 1; });
+    var list = DS.filter(function (x) { return (!v || x.phan === v) && maSet[x.ma.toUpperCase()] && (!chi || x.diem == null); })
+      .sort(function (a, b) { return ((a.diem == null ? 0 : 1) - (b.diem == null ? 0 : 1)) || ((a.tg || 0) - (b.tg || 0)); });
+    var chua = DS.filter(function (x) { return x.diem == null && maSet[x.ma.toUpperCase()] && (!v || x.phan === v); }).length;
+    $('chamCount').textContent = '· Còn ' + chua + ' câu chưa chấm';
+    if (!list.length) { $('chamBody').innerHTML = '<p class="muted">Không có câu nào cần chấm.</p>'; return; }
+    $('chamBody').innerHTML = list.map(function (x) {
+      return '<div class="q" data-row="' + x.row + '">' +
+        '<div class="row" style="justify-content:space-between"><b>' + esc(x.ten + ' (' + x.ma + ')') + '</b><span class="muted" style="font-size:13px">' + esc(x.phan + ' · ' + x.id + ' · ' + x.maDe) + ' · ' + dt(x.tg) + '</span></div>' +
+        '<div class="qh" style="margin-top:8px">' + esc(x.cauHoi) + '</div>' +
+        (x.huongDan ? '<details style="margin-bottom:8px"><summary class="muted" style="cursor:pointer">Xem hướng dẫn chấm</summary><div class="feedback">' + esc(x.huongDan) + '</div></details>' : '<div class="hint">Câu này chưa có hướng dẫn chấm.</div>') +
+        '<div class="hint">Bài làm:</div><div class="answer-text">' + (esc(x.traLoi) || '<i class="muted">(bỏ trống)</i>') + '</div>' +
+        '<div class="row" style="margin-top:10px">' +
+        '<input type="number" min="0" max="10" step="0.5" placeholder="Điểm 0-10" value="' + (x.diem == null ? '' : x.diem) + '" style="width:120px" class="cDiem">' +
+        '<input type="text" placeholder="Nhận xét (không bắt buộc)" value="' + esc(x.nhanXet) + '" class="grow cNx">' +
+        '<button class="btn cSave">' + (x.diem == null ? 'Lưu điểm' : 'Cập nhật') + '</button>' +
+        '<span class="cMsg" style="font-size:13px"></span></div></div>';
+    }).join('');
+    Array.prototype.forEach.call(document.querySelectorAll('#chamBody .q'), function (card) {
+      card.querySelector('.cSave').onclick = function () {
+        var row = +card.getAttribute('data-row');
+        var x = DS.filter(function (y) { return y.row === row; })[0];
+        var d = card.querySelector('.cDiem').value, nx = card.querySelector('.cNx').value, msg = card.querySelector('.cMsg'), btn = this;
+        if (d === '' || isNaN(+d) || +d < 0 || +d > 10) { msg.style.color = 'var(--red)'; msg.textContent = 'Nhập điểm từ 0 đến 10'; return; }
+        btn.disabled = true; msg.style.color = 'var(--muted)'; msg.textContent = 'Đang lưu...';
+        api({ action: 'chamTuLuan', password: pass(), items: [{ row: row, maBai: x.maBai, id: x.id, diem: +d, nhanXet: nx }] }).then(function () {
+          x.diem = +d; x.nhanXet = nx;
+          msg.style.color = 'var(--green)'; msg.textContent = 'Đã lưu ' + d + ' điểm';
+          btn.disabled = false; btn.textContent = 'Cập nhật';
+          api({ action: 'admin', password: pass() }).then(function (r) { D = r; renderOverview(); }).catch(function () {});
+        }).catch(function (ex) { btn.disabled = false; msg.style.color = 'var(--red)'; msg.textContent = ex.message; });
+      };
+    });
   }
 
   // ----- Bảng xếp hạng -----

@@ -37,7 +37,7 @@
     </div>
     <div class="card">
       <h3>Chọn phần thi</h3>
-      <p class="muted" style="margin-top:0">Mỗi lần thi bạn nhận một mã đề riêng, câu hỏi và đáp án được trộn ngẫu nhiên. Có thể thi lại nhiều lần. Sau khi nộp chỉ hiện điểm, không hiện đáp án.</p>
+      <p class="muted" style="margin-top:0">Mỗi lần thi bạn nhận một mã đề riêng, câu hỏi và đáp án được trộn ngẫu nhiên. Có thể thi lại nhiều lần. Điểm và kết quả sẽ do quản lý thông báo.</p>
       <div class="phan-list" id="phanList"></div>
       <div id="errHome" class="err hidden"></div>
     </div>
@@ -64,11 +64,10 @@
   <!-- KẾT QUẢ -->
   <section id="scResult" class="hidden">
     <div class="card center">
+      <div style="font-size:56px;line-height:1">&#10004;</div>
+      <h2 style="margin:12px 0 4px">Đã nộp bài thành công</h2>
       <div class="muted" id="resTitle"></div>
-      <div class="score-big" id="resScore" style="margin:12px 0"></div>
-      <div id="resBadge"></div>
-      <div class="stats" id="resStats"></div>
-      <div id="tlNote" class="hidden" style="margin-top:14px;background:var(--amber-bg);color:var(--amber);padding:10px 12px;border-radius:8px;font-size:14px">Phần tự luận sẽ được chấm chéo. Điểm tổng và kết quả cuối cùng sẽ được quản lý thông báo sau.</div>
+      <p class="muted" style="margin-top:14px">Bài làm đã được lưu. Điểm và kết quả sẽ được quản lý chấm và thông báo sau.</p>
       <div class="row" style="justify-content:center;margin-top:18px">
         <button class="btn" id="btnAgain">Thi lại phần này</button>
         <button class="btn-ghost" id="btnHome">Về danh sách phần thi</button>
@@ -149,10 +148,10 @@
     $('helloSub').textContent = [state.nv.ma, state.nv.nhom, state.nv.duAn].filter(Boolean).join(' · ');
     var html = state.phans.map(function (p) {
       var h = p.lichSu || {};
-      var badge = h.lanThi ? (h.dat ? '<span class="badge b-green">ĐÃ ĐẠT</span>' : '<span class="badge b-red">CHƯA ĐẠT</span>') : '<span class="badge b-gray">CHƯA THI</span>';
-      var hist = h.lanThi ? ' · Đã thi ' + h.lanThi + ' lần · Cao nhất ' + fmtScore(h.diemCao) + 'đ' : '';
+      var badge = h.lanThi ? '<span class="badge b-green">ĐÃ THI ' + h.lanThi + ' LẦN</span>' : '<span class="badge b-gray">CHƯA THI</span>';
+      var hist = '';
       return '<div class="phan"><div><b>' + esc(p.ma + '. ' + p.ten) + '</b> ' + badge +
-        '<div class="meta">' + p.phut + ' phút · ' + p.soTN + ' câu trắc nghiệm · ' + p.soTL + ' câu tự luận · Đạt từ ' + fmtScore(p.diemDat) + 'đ' + hist + '</div></div>' +
+        '<div class="meta">' + p.phut + ' phút · ' + p.soTN + ' câu trắc nghiệm · ' + p.soTL + ' câu tự luận' + hist + '</div></div>' +
         '<button class="btn" data-phan="' + esc(p.ma) + '">' + (h.lanThi ? 'Thi lại' : 'Bắt đầu') + '</button></div>';
     }).join('') || '<p class="muted">Chưa có phần thi nào đang mở.</p>';
     $('phanList').innerHTML = html;
@@ -262,24 +261,8 @@
   }
 
   // ---------- Kết quả ----------
-  var lastResult = null;
   function renderResult(r) {
-    $('resTitle').textContent = r.phan.ma + '. ' + r.phan.ten + ' · ' + r.maDe + ' · Lần thi ' + r.lanThi;
-    var dat = r.ketQua.indexOf('ĐẠT') === 0;
-    if (r.tong == null) {
-      $('resScore').innerHTML = (r.nTN ? fmtScore(r.diemTN) + '<span style="font-size:24px">/10 trắc nghiệm</span>' : '<span style="font-size:28px">Đã nộp bài</span>');
-      $('resScore').className = 'score-big';
-    } else {
-      $('resScore').innerHTML = fmtScore(r.tong) + '<span style="font-size:24px">/10</span>';
-      $('resScore').className = 'score-big ' + (dat ? 'pass' : 'fail');
-    }
-    $('resBadge').innerHTML = '<span class="badge ' + (r.choCham ? 'b-amber' : (dat ? 'b-green' : 'b-red')) + '" style="font-size:14px;padding:4px 12px">' + esc(r.ketQua) + '</span>' +
-      '<div class="muted" style="margin-top:6px">Điểm đạt: ' + fmtScore(r.diemDat) + ' · Thời gian làm: ' + fmtScore(r.phutLam) + ' phút</div>';
-    var stats = [];
-    if (r.nTN) stats.push('<div class="stat">Trắc nghiệm<b>' + r.dungTN + '/' + r.nTN + ' câu đúng</b><span class="muted">' + fmtScore(r.diemTN) + ' điểm</span></div>');
-    if (r.nTL) stats.push('<div class="stat">Tự luận<b>' + (r.diemTL == null ? 'Chờ chấm chéo' : fmtScore(r.diemTL) + ' điểm') + '</b><span class="muted">' + r.nTL + ' câu</span></div>');
-    $('resStats').innerHTML = stats.join('');
-    $('tlNote').classList.toggle('hidden', !r.choCham);
+    $('resTitle').textContent = r.phan.ma + '. ' + r.phan.ten + ' · Mã đề ' + r.maDe + ' · Lần thi ' + r.lanThi + ' · ' + fmtScore(r.phutLam) + ' phút';
     show('scResult');
   }
 

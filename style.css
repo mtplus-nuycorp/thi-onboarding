@@ -15,7 +15,7 @@ body { margin: 0; font-family: "Segoe UI", Roboto, Arial, sans-serif; background
 h2 { font-size: 20px; margin: 0 0 12px; color: var(--navy); }
 h3 { font-size: 16px; margin: 0 0 8px; }
 .muted { color: var(--muted); }
-input[type=text], input[type=password], textarea, select { width: 100%; padding: 11px 12px; border: 1px solid #c9d1de; border-radius: 8px; font: inherit; background: #fff; }
+input[type=text], input[type=password], input[type=number], textarea, select { width: 100%; padding: 11px 12px; border: 1px solid #c9d1de; border-radius: 8px; font: inherit; background: #fff; }
 textarea { min-height: 160px; resize: vertical; }
 input:focus, textarea:focus, select:focus { outline: 2px solid var(--navy-2); border-color: transparent; }
 button { font: inherit; cursor: pointer; border: 0; border-radius: 8px; padding: 11px 18px; font-weight: 600; }

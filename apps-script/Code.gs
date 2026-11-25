@@ -20,8 +20,9 @@ function doPost(e) {
   try {
     var req = JSON.parse(e.postData.contents);
     var handlers = { config: apiConfig, login: apiLogin, start: apiStart, submit: apiSubmit, admin: apiAdmin,
-      // tương thích trang web bản cũ (đang chờ cập nhật): không chấm gì, chỉ báo chờ chấm chéo
-      chamTL: function () { return { tl: [], diemTL: null, tong: null, ketQua: 'CHỜ CHẤM TỰ LUẬN', choCham: true }; } };
+      dsTuLuan: apiDsTuLuan, chamTuLuan: apiChamTuLuan,
+      // tương thích trang web bản cũ (đang chờ cập nhật): không trả điểm
+      chamTL: function () { return { tl: [], diemTL: null, tong: null, ketQua: 'ĐÃ NỘP BÀI', choCham: false }; } };
     var fn = handlers[req.action];
     if (!fn) throw new Error('Yêu cầu không hợp lệ');
     var out = fn(req);
@@ -159,7 +160,8 @@ function apiLogin(req) {
     if (norm_(r[11]).indexOf('ĐẠT') === 0) h.dat = true;
   });
   var cfg = apiConfig();
-  cfg.phans.forEach(function (p) { p.lichSu = hist[p.ma] || { lanThi: 0, diemCao: null, dat: false }; });
+  // Không công khai điểm cho thí sinh: chỉ trả số lần đã thi
+  cfg.phans.forEach(function (p) { p.lichSu = { lanThi: hist[p.ma] ? hist[p.ma].lanThi : 0, diemCao: null, dat: false }; });
   return { nv: nv, phans: cfg.phans };
 }
 
@@ -308,13 +310,12 @@ function apiSubmit(req) {
     if (ctRows.length) ctSh.getRange(ctSh.getLastRow() + 1, 1, ctRows.length, 14).setValues(ctRows);
   } finally { lock.releaseLock(); }
 
-  // Không trả đáp án hay câu đúng/sai về cho thí sinh, chỉ trả điểm tổng
+  // Không công khai điểm, đáp án hay đúng/sai cho thí sinh. Điểm chỉ lưu trong Sheet và trang quản lý.
   return {
-    maDe: maDe, phan: { ma: p.ma, ten: p.ten }, lanThi: lanThi, phutLam: phutLam,
-    diemTN: diemTN, dungTN: dungTN, nTN: nTN, nTL: tlJobs.length, diemTL: diemTL, tong: tong,
-    diemDat: p.diemDat, ketQua: ketQua, choCham: choCham,
-    // tương thích trang web bản cũ: chỉ gửi lại bài tự luận của chính thí sinh, không có đáp án
-    review: review.filter(function (x) { return x.loai === 'TL'; }).map(function (x) { return { stt: x.stt, id: x.id, loai: 'TL', text: x.text, traLoi: x.traLoi, diem: x.diem, nhanXet: '' }; })
+    daNop: true, maDe: maDe, phan: { ma: p.ma, ten: p.ten }, lanThi: lanThi, phutLam: phutLam, nTL: tlJobs.length,
+    // các trường dưới đây chỉ để trang web bản cũ không bị lỗi, không chứa điểm
+    ketQua: 'ĐÃ NỘP BÀI', tong: null, diemTN: null, dungTN: 0, nTN: 0, diemTL: null, diemDat: null, choCham: false,
+    review: review.filter(function (x) { return x.loai === 'TL'; }).map(function (x) { return { stt: x.stt, id: x.id, loai: 'TL', text: x.text, traLoi: x.traLoi, diem: null, nhanXet: '' }; })
   };
 }
 
@@ -375,6 +376,59 @@ function apiAdmin(req) {
     cau: Object.keys(cau).map(function (k) { return cau[k]; }), sai: sai,
     sheetUrl: SpreadsheetApp.getActiveSpreadsheet().getUrl()
   };
+}
+
+// ================= API: CHẤM TỰ LUẬN TRÊN WEB QUẢN LÝ =================
+
+function checkPass_(req) {
+  var pass = PropertiesService.getScriptProperties().getProperty('ADMIN_PASSWORD');
+  if (!pass || norm_(req.password) !== pass) throw new Error('Sai mật khẩu');
+}
+
+/** Danh sách câu tự luận để chấm: kèm câu hỏi, bối cảnh, hướng dẫn chấm, bài làm, điểm hiện tại. */
+function apiDsTuLuan(req) {
+  checkPass_(req);
+  var hd = {};
+  rows_(SHEET.CAU_HOI).forEach(function (r) { hd[norm_(r[0])] = norm_(r[9]); });
+  var maDe = {};
+  rows_(SHEET.KET_QUA).forEach(function (r) { maDe[norm_(r[13])] = norm_(r[7]); });
+  var list = [];
+  var data = sh_(SHEET.CHI_TIET).getDataRange().getValues();
+  for (var i = 1; i < data.length; i++) {
+    var r = data[i];
+    if (key_(r[6]) !== 'TL' || !norm_(r[0])) continue;
+    var diem = norm_(r[13]) !== '' ? Number(r[13]) : (r[11] === '' ? null : Number(r[11]));
+    list.push({
+      row: i + 1, maBai: norm_(r[0]), tg: r[1] instanceof Date ? r[1].getTime() : null, ma: norm_(r[2]), ten: norm_(r[3]),
+      phan: key_(r[4]), id: norm_(r[5]), cauHoi: norm_(r[7]), traLoi: norm_(r[8]), huongDan: hd[norm_(r[5])] || '',
+      diem: diem, nhanXet: norm_(r[12]), maDe: maDe[norm_(r[0])] || ''
+    });
+  }
+  return { list: list };
+}
+
+/** Lưu điểm chấm tự luận (0-10) + nhận xét, rồi tính lại tổng điểm. */
+function apiChamTuLuan(req) {
+  checkPass_(req);
+  var items = req.items || [];
+  var sh = sh_(SHEET.CHI_TIET);
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  var saved = 0;
+  try {
+    items.forEach(function (it) {
+      var row = Number(it.row);
+      if (!row || row < 2) return;
+      var cur = sh.getRange(row, 1, 1, 14).getValues()[0];
+      if (norm_(cur[0]) !== norm_(it.maBai) || norm_(cur[5]) !== norm_(it.id)) throw new Error('Dữ liệu đã thay đổi, hãy tải lại trang.');
+      var d = Number(it.diem);
+      if (it.diem === '' || it.diem == null || isNaN(d) || d < 0 || d > 10) throw new Error('Điểm phải từ 0 đến 10');
+      sh.getRange(row, 11, 1, 4).setValues([[d >= 5 ? 'ĐẠT Ý' : 'THIẾU Ý', cur[11], norm_(it.nhanXet), d]]);
+      saved++;
+    });
+  } finally { lock.releaseLock(); }
+  tinhLaiTatCa_();
+  return { saved: saved };
 }
 
 // ================= MENU TRONG SHEET =================
