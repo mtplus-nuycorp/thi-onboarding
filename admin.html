@@ -74,7 +74,7 @@
 
   function load(pw) {
     return api({ action: 'admin', password: pw }).then(function (r) {
-      D = r;
+      D = gopTrung(r);
       try { sessionStorage.setItem('admin_pass', pw); } catch (e) {}
       $('sheetLink').href = r.sheetUrl; $('sheetLink').classList.remove('hidden');
       $('btnReload').classList.remove('hidden');
@@ -82,7 +82,17 @@
       $('scPass').classList.add('hidden'); $('scMain').classList.remove('hidden');
     });
   }
-  function reloadData() { return api({ action: 'admin', password: pass() }).then(function (r) { D = r; renderOverview(); }); }
+  function reloadData() { return api({ action: 'admin', password: pass() }).then(function (r) { D = gopTrung(r); renderOverview(); }); }
+  // Gộp người bị nhập trùng mã trong tab NHAN_VIEN (giữ dòng có đủ nhóm/dự án)
+  function gopTrung(r) {
+    var m = {}, list = [];
+    r.nhanVien.forEach(function (n) {
+      n.ma = String(n.ma || '').trim(); var k = n.ma.toUpperCase(); if (!k) return;
+      if (!m[k]) { m[k] = n; list.push(n); }
+      else { if (!m[k].nhom && n.nhom) m[k].nhom = n.nhom; if (!m[k].duAn && n.duAn) m[k].duAn = n.duAn; }
+    });
+    r.nhanVien = list; return r;
+  }
 
   $('fPass').onsubmit = function (e) {
     e.preventDefault();
