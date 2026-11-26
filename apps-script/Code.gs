@@ -8,6 +8,7 @@ var SHEET = {
   CAU_HOI: 'CAU_HOI', PHAN_THI: 'PHAN_THI', NHAN_VIEN: 'NHAN_VIEN',
   KET_QUA: 'KET_QUA', CHI_TIET: 'CHI_TIET', PHIEN: 'PHIEN'
 };
+var TRU_SAI_TN = 0.5;           // mỗi câu trắc nghiệm sai bị trừ 0,5 điểm
 var GRACE_MIN = 3;               // cho phép nộp trễ tối đa 3 phút (mạng chậm)
 
 // ================= API =================
@@ -265,7 +266,7 @@ function apiSubmit(req) {
       if (dung) dungTN++;
       var dapAnHienThi = q.dapAn.map(function (g) { return it.o.indexOf(g); }).filter(function (d) { return d >= 0; }).sort();
       review.push({ stt: i + 1, loai: 'TN', text: q.text, options: it.o.map(function (g) { return q.opts[g]; }), chon: chon.sort(), dapAn: dapAnHienThi, dung: dung });
-      chiTiet.push([it.id, 'TN', q.text, lettersOf_(chonGoc), lettersOf_(q.dapAn), 'CHỜ CHẤM', dung ? 10 : 0, '']);   // cột L = máy gợi ý, người chấm quyết định ở cột N
+      chiTiet.push([it.id, 'TN', q.text, lettersOf_(chonGoc), lettersOf_(q.dapAn), 'CHỜ CHẤM', dung ? 1 : 0, '']);   // cột L = máy gợi ý, người chấm quyết định ở cột N
     } else {
       var tra = norm_(answers[i]);
       var rv = { stt: i + 1, id: it.id, loai: 'TL', text: q.text, traLoi: tra, diem: null, nhanXet: '' };
@@ -290,6 +291,7 @@ function apiSubmit(req) {
     tlJobs.forEach(function (j) { if (j.rv.diem == null) choCham = true; else s += j.rv.diem; });
     if (!choCham) diemTL = round2_(s / tlJobs.length);
   }
+  choCham = true; diemTL = null;   // tất cả do người chấm quyết định
   var tong = tinhTong_(diemTN, diemTL, tlJobs.length > 0, choCham, p.tyTrongTN);
   var ketQua = choCham ? 'CHỜ CHẤM' : (tong >= p.diemDat - 1e-9 ? 'ĐẠT' : 'CHƯA ĐẠT');
   if (tre) ketQua += ' (nộp trễ)';
@@ -360,7 +362,7 @@ function apiAdmin(req) {
     if (!norm_(r[0])) return;
     var id = norm_(r[5]), loai = key_(r[6]);
     var diem = r[13] !== '' && r[13] != null ? Number(r[13]) : (r[11] === '' ? null : Number(r[11]));
-    var isSai = loai === 'TN' ? key_(r[10]) === 'SAI' : (diem != null && diem < 5);
+    var isSai = loai === 'TN' ? key_(r[10]) === 'SAI' : key_(r[10]) === 'THIẾU Ý';
     var c = cau[id] || (cau[id] = { id: id, phan: key_(r[4]), loai: loai, text: norm_(r[7]), luot: 0, sai: 0 });
     c.luot++;
     if (isSai) {
@@ -423,7 +425,7 @@ function apiBaiThi(req) {
   });
   if (!info) throw new Error('Không tìm thấy bài thi');
   var p = getPhans_()[info.phan];
-  info.tyTrongTN = p ? p.tyTrongTN : 50; info.diemDat = p ? p.diemDat : 10;
+  info.diemDat = p ? p.diemDat : 10;
   var bank = {};
   rows_(SHEET.CAU_HOI).forEach(function (r) {
     var id = norm_(r[0]); if (!id) return;
@@ -441,6 +443,8 @@ function apiBaiThi(req) {
       diem: norm_(r[13]) === '' ? null : Number(r[13]), nhanXet: norm_(r[12])
     });
   }
+  var nTN = items.filter(function (x) { return x.loai === 'TN'; }).length, nTL = items.length - nTN;
+  info.thang = thang_(p, nTN, nTL);
   return { bai: info, items: items };
 }
 
@@ -453,6 +457,12 @@ function apiChamBai(req) {
   lock.waitLock(25000);
   var saved = 0, maBai = '';
   try {
+    var all = sh.getDataRange().getValues(), dem = {}, phans = getPhans_();
+    for (var i = 1; i < all.length; i++) {
+      var mb = norm_(all[i][0]); if (!mb) continue;
+      var c = dem[mb] || (dem[mb] = { tn: 0, tl: 0, phan: key_(all[i][4]) });
+      if (key_(all[i][6]) === 'TN') c.tn++; else if (key_(all[i][6]) === 'TL') c.tl++;
+    }
     items.forEach(function (it) {
       var row = Number(it.row);
       if (!row || row < 2) return;
@@ -460,7 +470,12 @@ function apiChamBai(req) {
       if (norm_(cur[0]) !== norm_(it.maBai) || norm_(cur[5]) !== norm_(it.id)) throw new Error('Dữ liệu đã thay đổi, hãy tải lại trang.');
       var trong = it.diem === '' || it.diem == null;
       var d = Number(it.diem);
-      if (!trong && (isNaN(d) || d < 0 || d > 10)) throw new Error('Điểm phải từ 0 đến 10');
+      if (!trong && (isNaN(d) || d < 0)) throw new Error('Điểm không hợp lệ');
+      if (!trong && key_(cur[6]) === 'TN') d = d > 0 ? 1 : 0;
+      if (!trong && key_(cur[6]) === 'TL') {
+        var dc = dem[norm_(cur[0])], mx = round2_(thang_(phans[dc.phan], dc.tn, dc.tl).moiTL);
+        if (d > mx + 0.01) throw new Error('Điểm câu ' + it.id + ' tối đa ' + mx);
+      }
       sh.getRange(row, 13, 1, 2).setValues([[norm_(it.nhanXet), trong ? '' : d]]);
       maBai = norm_(it.maBai);
       saved++;
@@ -503,9 +518,22 @@ function menuTinhLai() {
 }
 
 /**
+ * Thang điểm 10 = Trắc nghiệm (tỷ trọng cột F, mặc định 50% = 5đ) + Tự luận (phần còn lại = 5đ).
+ * - TN: đúng mỗi câu được (điểm TN tối đa / số câu TN), sai mỗi câu bị trừ TRU_SAI_TN; thấp nhất 0.
+ * - TL: điểm tối đa chia đều cho các câu; người chấm nhập điểm từng câu trong khoảng đó.
+ */
+function thang_(p, nTN, nTL) {
+  var w = (p ? p.tyTrongTN : 50) / 100;
+  var maxTN = nTN ? (nTL ? 10 * w : 10) : 0;
+  var maxTL = nTL ? 10 - maxTN : 0;
+  return { maxTN: round2_(maxTN), maxTL: round2_(maxTL), moiTN: nTN ? maxTN / nTN : 0, moiTL: nTL ? maxTL / nTL : 0, truSai: TRU_SAI_TN };
+}
+
+/**
  * Tính lại điểm cho mọi bài:
- * - Máy chỉ cập nhật GỢI Ý cho câu TN theo đáp án hiện tại trong CAU_HOI (cột L).
- * - Điểm thật của mọi câu (TN và TL) là điểm người chấm ở cột N; câu nào trống thì bài còn CHỜ CHẤM.
+ * - Máy chỉ cập nhật GỢI Ý cho câu TN theo đáp án hiện tại trong CAU_HOI (cột L: 1 = đúng, 0 = sai).
+ * - Điểm thật là quyết định của người chấm ở cột N: TN 1 = Đúng / 0 = Sai; TL = số điểm của câu.
+ *   Câu nào trống thì bài còn CHỜ CHẤM.
  */
 function tinhLaiTatCa_() {
   var phans = getPhans_();
@@ -513,28 +541,33 @@ function tinhLaiTatCa_() {
   rows_(SHEET.CAU_HOI).forEach(function (r) { var id = norm_(r[0]); if (id) bank[id] = parseAnswer_(r[8]); });
   var ctSh = sh_(SHEET.CHI_TIET);
   var data = ctSh.getDataRange().getValues();
-  var agg = {}, out = [];
-  for (var i = 1; i < data.length; i++) {
-    var r = data[i], m = norm_(r[0]);
+  var agg = {}, i, r, m;
+  for (i = 1; i < data.length; i++) {          // lượt 1: đếm số câu mỗi bài
+    r = data[i]; m = norm_(r[0]); if (!m) continue;
+    var a0 = agg[m] || (agg[m] = { phan: key_(r[4]), tnN: 0, tnDung: 0, tnSai: 0, tnCho: false, tlN: 0, tlS: 0, tlCho: false });
+    if (key_(r[6]) === 'TN') a0.tnN++; else if (key_(r[6]) === 'TL') a0.tlN++;
+  }
+  Object.keys(agg).forEach(function (k) { var a = agg[k]; a.t = thang_(phans[a.phan], a.tnN, a.tlN); });
+  var out = [];
+  for (i = 1; i < data.length; i++) {          // lượt 2: gợi ý máy + cộng điểm người chấm
+    r = data[i]; m = norm_(r[0]);
     var J = r[9], K = r[10], L = r[11];
     if (m) {
-      var a = agg[m] || (agg[m] = { tnN: 0, tnS: 0, tlN: 0, tlS: 0, cho: false, tnCho: false, tlCho: false });
-      var loai = key_(r[6]);
+      var a = agg[m], loai = key_(r[6]);
       var cham = norm_(r[13]) !== '' && !isNaN(Number(r[13])) ? Number(r[13]) : null;
       if (loai === 'TN') {
         var da = bank[norm_(r[5])];
         if (da && da.length) {
           var chon = parseAnswer_(r[8]);
           var dung = chon.length === da.length && chon.every(function (v, k) { return v === da[k]; });
-          J = lettersOf_(da); L = dung ? 10 : 0;
+          J = lettersOf_(da); L = dung ? 1 : 0;
         }
-        a.tnN++;
-        if (cham == null) { a.cho = true; a.tnCho = true; K = 'CHỜ CHẤM'; }   // L chỉ là gợi ý của máy
-        else { a.tnS += cham; K = cham >= 5 ? 'ĐÚNG' : 'SAI'; }
+        if (cham == null) { a.tnCho = true; K = 'CHỜ CHẤM'; }
+        else if (cham > 0) { a.tnDung++; K = 'ĐÚNG'; }
+        else { a.tnSai++; K = 'SAI'; }
       } else if (loai === 'TL') {
-        var d = cham;
-        a.tlN++;
-        if (d == null || isNaN(d)) { a.cho = true; a.tlCho = true; K = 'CHỜ CHẤM'; } else { a.tlS += d; K = d >= 5 ? 'ĐẠT Ý' : 'THIẾU Ý'; }
+        if (cham == null) { a.tlCho = true; K = 'CHỜ CHẤM'; }
+        else { a.tlS += cham; K = cham >= a.t.moiTL / 2 - 1e-9 ? 'ĐẠT Ý' : 'THIẾU Ý'; }
       }
     }
     out.push([J, K, L]);
@@ -546,10 +579,11 @@ function tinhLaiTatCa_() {
   for (var j = 1; j < kd.length; j++) {
     var x = kd[j], mb = norm_(x[13]), t = agg[mb], p = phans[key_(x[4])];
     if (!mb || !t || !p) { res.push([x[8], x[9], x[10], x[11]]); continue; }
-    var diemTN = t.tnN && !t.tnCho ? round2_(t.tnS / t.tnN) : null;
-    var diemTL = t.tlN && !t.tlCho ? round2_(t.tlS / t.tlN) : null;
-    var tong = tinhTong_(diemTN, diemTL, t.tlN > 0, t.cho, p.tyTrongTN);
-    var ketQua = t.cho ? 'CHỜ CHẤM' : (tong >= p.diemDat - 1e-9 ? 'ĐẠT' : 'CHƯA ĐẠT');
+    var diemTN = t.tnN && !t.tnCho ? round2_(Math.max(0, t.tnDung * t.t.moiTN - t.tnSai * TRU_SAI_TN)) : null;
+    var diemTL = t.tlN && !t.tlCho ? round2_(Math.min(t.t.maxTL, t.tlS)) : null;
+    var cho = t.tnCho || t.tlCho;
+    var tong = cho ? null : round2_((diemTN || 0) + (diemTL || 0));
+    var ketQua = cho ? 'CHỜ CHẤM' : (tong >= p.diemDat - 1e-9 ? 'ĐẠT' : 'CHƯA ĐẠT');
     if (norm_(x[11]).indexOf('nộp trễ') >= 0) ketQua += ' (nộp trễ)';
     res.push([diemTN == null ? '' : diemTN, diemTL == null ? '' : diemTL, tong == null ? '' : tong, ketQua]);
     changed++;
