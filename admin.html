@@ -231,11 +231,13 @@
     var t = T();
     var tn = B.items.filter(function (x) { return x.loai === 'TN'; }), tl = B.items.filter(function (x) { return x.loai === 'TL'; });
     var chamTN = tn.filter(function (x) { return x.v != null; }), chamTL = tl.filter(function (x) { return x.v != null; });
-    var dung = chamTN.filter(function (x) { return x.v > 0; }).length, sai = chamTN.length - dung;
-    var dTN = Math.max(0, dung * t.moiTN - sai * t.truSai);
+    var dung = chamTN.filter(function (x) { return x.v >= 1; }).length, mot = chamTN.filter(function (x) { return x.v > 0 && x.v < 1; }).length;
+    var sai = chamTN.length - dung - mot;
+    var cong = chamTN.reduce(function (s, x) { return s + (x.v > 0 ? Math.min(1, x.v) : 0); }, 0);
+    var dTN = Math.max(0, cong * t.moiTN - sai * t.truSai);
     var dTL = Math.min(t.maxTL, chamTL.reduce(function (s, x) { return s + x.v; }, 0));
     var xong = chamTN.length === tn.length && chamTL.length === tl.length;
-    return { tn: r2(dTN), tl: r2(dTL), nTN: tn.length, nTL: tl.length, cTN: chamTN.length, cTL: chamTL.length, dung: dung, sai: sai,
+    return { tn: r2(dTN), tl: r2(dTL), nTN: tn.length, nTL: tl.length, cTN: chamTN.length, cTL: chamTL.length, dung: dung, mot: mot, sai: sai,
       tong: xong ? r2((tn.length ? dTN : 0) + (tl.length ? dTL : 0)) : null, t: t };
   }
 
@@ -254,7 +256,7 @@
     if (tn.length) {
       var th = T();
       h += '<h3 class="sec">Phần trắc nghiệm <span class="muted">(' + tn.length + ' câu · tối đa ' + f(th.maxTN) + ' điểm · đúng +' + f(r2(th.moiTN)) + ' · sai −' + f(th.truSai) + ')</span></h3>' +
-        '<p class="muted" style="font-size:13px;margin-top:-4px">Ô <span class="lg lg-ok">xanh lá</span> là đáp án trong Sheet · nhãn <b>“Thí sinh chọn”</b> là lựa chọn của người thi. Thứ tự A–D là thứ tự gốc, không phải thứ tự đã trộn trên đề. Máy chỉ <b>gợi ý</b> Đúng/Sai, điểm do bạn bấm mới được tính.</p>' +
+        '<p class="muted" style="font-size:13px;margin-top:-4px">Ô <span class="lg lg-ok">xanh lá</span> là đáp án trong Sheet · nhãn <b>“Thí sinh chọn”</b> là lựa chọn của người thi. Thứ tự A–D là thứ tự gốc, không phải thứ tự đã trộn trên đề. Đúng hết được cả điểm câu, chọn đúng một phần (không chọn nhầm) được theo tỷ lệ, chọn nhầm hoặc bỏ trống bị trừ. Máy chỉ <b>gợi ý</b>, điểm do bạn bấm mới được tính.</p>' +
         (tn.some(function (x) { return x.v == null && x.may != null; }) ? '<button class="btn-ghost btn-sm" id="btnTheoMay" style="margin-bottom:10px">Chấm theo gợi ý của máy cho các câu trắc nghiệm chưa chấm</button>' : '');
       tn.forEach(function (it) {
         stt++;
@@ -266,12 +268,15 @@
           return '<div class="opt ro ' + cls + '"><span class="letter">' + L + '.</span><span>' + esc(o) + '</span><span class="tag">' +
             (c ? '<span class="badge b-blue">Thí sinh chọn</span> ' : '') + (d ? '<span class="badge b-green">Đáp án</span>' : '') + '</span></div>';
         }).join('');
-        var mayTxt = it.may == null ? 'chưa có đáp án' : (it.may > 0 ? '<b style="color:var(--green)">Đúng</b>' : '<b style="color:var(--red)">Sai</b>');
+        var nDA = da.replace(/[^A-D]/g, '').length;
+        var mayTxt = it.may == null ? 'chưa có đáp án' : (it.may > 0 && it.may < 1 ? '<b style="color:var(--amber)">Đúng 1 phần (' + Math.round(it.may * nDA) + '/' + nDA + ')</b>' : it.may > 0 ? '<b style="color:var(--green)">Đúng</b>' : '<b style="color:var(--red)">Sai</b>');
         var d0 = it.v;
         h += '<div class="q" data-row="' + it.row + '"><div class="row" style="justify-content:space-between"><span class="num"><b>Câu ' + stt + '</b> <span class="muted" style="font-size:12px">' + esc(it.id) + '</span></span>' +
-          '<span>' + (chon ? '' : '<span class="badge b-red">Bỏ trống</span> ') + (d0 == null ? '<span class="badge b-amber">Chưa chấm</span>' : (d0 > 0 ? '<span class="badge b-green">Đúng · +' + f(r2(th.moiTN)) + '</span>' : '<span class="badge b-red">Sai · −' + f(th.truSai) + '</span>')) + '</span></div><div class="qh" style="margin-top:6px">' + esc(it.cauHoi) + '</div>' + opts +
+          '<span>' + (chon ? '' : '<span class="badge b-red">Bỏ trống</span> ') + (d0 == null ? '<span class="badge b-amber">Chưa chấm</span>' : (d0 > 0 ? '<span class="badge ' + (d0 >= 1 ? 'b-green' : 'b-amber') + '">' + (d0 >= 1 ? 'Đúng' : 'Đúng 1 phần') + ' · +' + f(r2(th.moiTN * Math.min(1, d0))) + '</span>' : '<span class="badge b-red">Sai · −' + f(th.truSai) + '</span>')) + '</span></div><div class="qh" style="margin-top:6px">' + esc(it.cauHoi) + '</div>' + opts +
           '<div class="grade"><span class="muted">Máy gợi ý: ' + mayTxt + '</span><span class="grow"></span>' +
-          '<button class="seg' + (d0 != null && d0 > 0 ? ' on-ok' : '') + '" data-set="1">✓ Đúng (+' + f(r2(th.moiTN)) + ')</button><button class="seg' + (d0 === 0 ? ' on-bad' : '') + '" data-set="0">✗ Sai (−' + f(th.truSai) + ')</button>' +
+          '<button class="seg' + (d0 != null && d0 >= 1 ? ' on-ok' : '') + '" data-set="1">✓ Đúng hết (+' + f(r2(th.moiTN)) + ')</button>' +
+          (function () { var b = ''; for (var k = 1; k < nDA; k++) { var fr = r2(k / nDA); b += '<button class="seg' + (d0 === fr ? ' on-part' : '') + '" data-set="' + fr + '">Đúng ' + k + '/' + nDA + ' (+' + f(r2(th.moiTN * fr)) + ')</button>'; } return b; })() +
+          '<button class="seg' + (d0 === 0 ? ' on-bad' : '') + '" data-set="0">✗ Sai (−' + f(th.truSai) + ')</button>' +
           (it.v != null ? '<button class="seg" data-set="">↺ Bỏ chấm</button>' : '') + '</div></div>';
       });
     }
@@ -296,7 +301,7 @@
     $('tabBody').innerHTML = h;
     $('btnBack').onclick = function () { if (!confirmBo()) return; B = null; render(); };
     if ($('btnTheoMay')) $('btnTheoMay').onclick = function () {
-      B.items.forEach(function (x) { if (x.loai === 'TN' && x.v == null && x.may != null) x.v = x.may > 0 ? 1 : 0; });
+      B.items.forEach(function (x) { if (x.loai === 'TN' && x.v == null && x.may != null) x.v = x.may; });
       dirty = true; var y = window.scrollY; renderBai(); window.scrollTo(0, y);
     };
     if ($('btnPrev')) $('btnPrev').onclick = function () { if (confirmBo()) moBai(dsHienTai[idx - 1]); };
@@ -325,7 +330,7 @@
   function drawBar() {
     var t = tamTinh();
     var part = function (lb, d, c, n, mx, extra) { return n ? '<span class="sumbox">' + lb + ' <b>' + f(d) + '</b>/' + f(mx) + ' <span class="muted" style="font-size:12px">' + (c < n ? '(chấm ' + c + '/' + n + ' câu)' : extra) + '</span></span>' : ''; };
-    $('barSum').innerHTML = part('TN', t.tn, t.cTN, t.nTN, t.t.maxTN, '(' + t.dung + ' đúng · ' + t.sai + ' sai)') + part('TL', t.tl, t.cTL, t.nTL, t.t.maxTL, '') +
+    $('barSum').innerHTML = part('TN', t.tn, t.cTN, t.nTN, t.t.maxTN, '(' + t.dung + ' đúng' + (t.mot ? ' · ' + t.mot + ' đúng 1 phần' : '') + ' · ' + t.sai + ' sai)') + part('TL', t.tl, t.cTL, t.nTL, t.t.maxTL, '') +
       '<span class="sumbox">Tổng <b>' + f(t.tong) + '</b>/10</span>' +
       (dirty ? '<span class="badge b-amber">Chưa lưu</span>' : '<span class="badge b-green">Đã lưu</span>');
     var idx = dsHienTai.indexOf(B.maBai);

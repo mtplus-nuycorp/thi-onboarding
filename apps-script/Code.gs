@@ -266,7 +266,7 @@ function apiSubmit(req) {
       if (dung) dungTN++;
       var dapAnHienThi = q.dapAn.map(function (g) { return it.o.indexOf(g); }).filter(function (d) { return d >= 0; }).sort();
       review.push({ stt: i + 1, loai: 'TN', text: q.text, options: it.o.map(function (g) { return q.opts[g]; }), chon: chon.sort(), dapAn: dapAnHienThi, dung: dung });
-      chiTiet.push([it.id, 'TN', q.text, lettersOf_(chonGoc), lettersOf_(q.dapAn), 'CHỜ CHẤM', dung ? 1 : 0, '']);   // cột L = máy gợi ý, người chấm quyết định ở cột N
+      chiTiet.push([it.id, 'TN', q.text, lettersOf_(chonGoc), lettersOf_(q.dapAn), 'CHỜ CHẤM', goiY_(chonGoc, q.dapAn), '']);   // cột L = máy gợi ý, người chấm quyết định ở cột N
     } else {
       var tra = norm_(answers[i]);
       var rv = { stt: i + 1, id: it.id, loai: 'TL', text: q.text, traLoi: tra, diem: null, nhanXet: '' };
@@ -328,6 +328,13 @@ function tinhTong_(diemTN, diemTL, coTL, choCham, tyTrongTN) {
   if (!coTL) return diemTN;
   var w = tyTrongTN / 100;
   return round2_(diemTN * w + diemTL * (1 - w));
+}
+
+/** Gợi ý của máy cho 1 câu TN: 1 = đúng hết, 0<x<1 = đúng một phần (không chọn nhầm), 0 = sai. */
+function goiY_(chon, da) {
+  if (!da.length || !chon.length) return 0;
+  if (chon.some(function (c) { return da.indexOf(c) < 0; })) return 0;
+  return round2_(chon.length / da.length);
 }
 
 function lettersOf_(arr) { return arr.map(function (g) { return 'ABCD'.charAt(g); }).join(','); }
@@ -471,7 +478,7 @@ function apiChamBai(req) {
       var trong = it.diem === '' || it.diem == null;
       var d = Number(it.diem);
       if (!trong && (isNaN(d) || d < 0)) throw new Error('Điểm không hợp lệ');
-      if (!trong && key_(cur[6]) === 'TN') d = d > 0 ? 1 : 0;
+      if (!trong && key_(cur[6]) === 'TN') d = Math.min(1, d);   // 1 = đúng hết, 0<d<1 = đúng một phần, 0 = sai
       if (!trong && key_(cur[6]) === 'TL') {
         var dc = dem[norm_(cur[0])], mx = round2_(thang_(phans[dc.phan], dc.tn, dc.tl).moiTL);
         if (d > mx + 0.01) throw new Error('Điểm câu ' + it.id + ' tối đa ' + mx);
@@ -519,7 +526,8 @@ function menuTinhLai() {
 
 /**
  * Thang điểm 10 = Trắc nghiệm (tỷ trọng cột F, mặc định 50% = 5đ) + Tự luận (phần còn lại = 5đ).
- * - TN: đúng mỗi câu được (điểm TN tối đa / số câu TN), sai mỗi câu bị trừ TRU_SAI_TN; thấp nhất 0.
+ * - TN: đúng hết được (điểm TN tối đa / số câu TN), đúng một phần được theo tỷ lệ đáp án đúng đã chọn,
+ *   sai (chọn nhầm hoặc bỏ trống) bị trừ TRU_SAI_TN; thấp nhất 0.
  * - TL: điểm tối đa chia đều cho các câu; người chấm nhập điểm từng câu trong khoảng đó.
  */
 function thang_(p, nTN, nTL) {
@@ -544,7 +552,7 @@ function tinhLaiTatCa_() {
   var agg = {}, i, r, m;
   for (i = 1; i < data.length; i++) {          // lượt 1: đếm số câu mỗi bài
     r = data[i]; m = norm_(r[0]); if (!m) continue;
-    var a0 = agg[m] || (agg[m] = { phan: key_(r[4]), tnN: 0, tnDung: 0, tnSai: 0, tnCho: false, tlN: 0, tlS: 0, tlCho: false });
+    var a0 = agg[m] || (agg[m] = { phan: key_(r[4]), tnN: 0, tnCong: 0, tnSai: 0, tnCho: false, tlN: 0, tlS: 0, tlCho: false });
     if (key_(r[6]) === 'TN') a0.tnN++; else if (key_(r[6]) === 'TL') a0.tlN++;
   }
   Object.keys(agg).forEach(function (k) { var a = agg[k]; a.t = thang_(phans[a.phan], a.tnN, a.tlN); });
@@ -558,12 +566,10 @@ function tinhLaiTatCa_() {
       if (loai === 'TN') {
         var da = bank[norm_(r[5])];
         if (da && da.length) {
-          var chon = parseAnswer_(r[8]);
-          var dung = chon.length === da.length && chon.every(function (v, k) { return v === da[k]; });
-          J = lettersOf_(da); L = dung ? 1 : 0;
+          J = lettersOf_(da); L = goiY_(parseAnswer_(r[8]), da);
         }
         if (cham == null) { a.tnCho = true; K = 'CHỜ CHẤM'; }
-        else if (cham > 0) { a.tnDung++; K = 'ĐÚNG'; }
+        else if (cham > 0) { a.tnCong += Math.min(1, cham); K = cham >= 1 ? 'ĐÚNG' : 'ĐÚNG 1 PHẦN'; }
         else { a.tnSai++; K = 'SAI'; }
       } else if (loai === 'TL') {
         if (cham == null) { a.tlCho = true; K = 'CHỜ CHẤM'; }
@@ -579,7 +585,7 @@ function tinhLaiTatCa_() {
   for (var j = 1; j < kd.length; j++) {
     var x = kd[j], mb = norm_(x[13]), t = agg[mb], p = phans[key_(x[4])];
     if (!mb || !t || !p) { res.push([x[8], x[9], x[10], x[11]]); continue; }
-    var diemTN = t.tnN && !t.tnCho ? round2_(Math.max(0, t.tnDung * t.t.moiTN - t.tnSai * TRU_SAI_TN)) : null;
+    var diemTN = t.tnN && !t.tnCho ? round2_(Math.max(0, t.tnCong * t.t.moiTN - t.tnSai * TRU_SAI_TN)) : null;
     var diemTL = t.tlN && !t.tlCho ? round2_(Math.min(t.t.maxTL, t.tlS)) : null;
     var cho = t.tnCho || t.tlCho;
     var tong = cho ? null : round2_((diemTN || 0) + (diemTL || 0));
