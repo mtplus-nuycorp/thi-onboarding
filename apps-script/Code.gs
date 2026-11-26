@@ -265,7 +265,7 @@ function apiSubmit(req) {
       if (dung) dungTN++;
       var dapAnHienThi = q.dapAn.map(function (g) { return it.o.indexOf(g); }).filter(function (d) { return d >= 0; }).sort();
       review.push({ stt: i + 1, loai: 'TN', text: q.text, options: it.o.map(function (g) { return q.opts[g]; }), chon: chon.sort(), dapAn: dapAnHienThi, dung: dung });
-      chiTiet.push([it.id, 'TN', q.text, lettersOf_(chonGoc), lettersOf_(q.dapAn), dung ? 'ĐÚNG' : 'SAI', dung ? 10 : 0, '']);
+      chiTiet.push([it.id, 'TN', q.text, lettersOf_(chonGoc), lettersOf_(q.dapAn), 'CHỜ CHẤM', dung ? 10 : 0, '']);   // cột L = máy gợi ý, người chấm quyết định ở cột N
     } else {
       var tra = norm_(answers[i]);
       var rv = { stt: i + 1, id: it.id, loai: 'TL', text: q.text, traLoi: tra, diem: null, nhanXet: '' };
@@ -282,15 +282,16 @@ function apiSubmit(req) {
     else setTL_(j, null, '');
   });
 
-  var diemTN = nTN ? round2_(dungTN / nTN * 10) : null;
-  var diemTL = null, choCham = false;
+  // Mọi câu (cả TN) đều do người chấm quyết định: bài luôn ở trạng thái chờ chấm khi mới nộp
+  var diemTN = null;
+  var diemTL = null, choCham = nTN > 0;
   if (tlJobs.length) {
     var s = 0;
     tlJobs.forEach(function (j) { if (j.rv.diem == null) choCham = true; else s += j.rv.diem; });
     if (!choCham) diemTL = round2_(s / tlJobs.length);
   }
   var tong = tinhTong_(diemTN, diemTL, tlJobs.length > 0, choCham, p.tyTrongTN);
-  var ketQua = choCham ? 'CHỜ CHẤM TỰ LUẬN' : (tong >= p.diemDat - 1e-9 ? 'ĐẠT' : 'CHƯA ĐẠT');
+  var ketQua = choCham ? 'CHỜ CHẤM' : (tong >= p.diemDat - 1e-9 ? 'ĐẠT' : 'CHƯA ĐẠT');
   if (tre) ketQua += ' (nộp trễ)';
 
   // --- Ghi kết quả ---
@@ -503,8 +504,8 @@ function menuTinhLai() {
 
 /**
  * Tính lại điểm cho mọi bài:
- * - TN: máy chấm lại theo đáp án hiện tại trong CAU_HOI (cột L), điểm người chấm (cột N) nếu có sẽ được ưu tiên.
- * - TL: điểm người chấm (cột N), nếu trống thì dùng cột L (vd bỏ trống = 0), nếu vẫn trống là chờ chấm.
+ * - Máy chỉ cập nhật GỢI Ý cho câu TN theo đáp án hiện tại trong CAU_HOI (cột L).
+ * - Điểm thật của mọi câu (TN và TL) là điểm người chấm ở cột N; câu nào trống thì bài còn CHỜ CHẤM.
  */
 function tinhLaiTatCa_() {
   var phans = getPhans_();
@@ -517,7 +518,7 @@ function tinhLaiTatCa_() {
     var r = data[i], m = norm_(r[0]);
     var J = r[9], K = r[10], L = r[11];
     if (m) {
-      var a = agg[m] || (agg[m] = { tnN: 0, tnS: 0, tlN: 0, tlS: 0, cho: false });
+      var a = agg[m] || (agg[m] = { tnN: 0, tnS: 0, tlN: 0, tlS: 0, cho: false, tnCho: false, tlCho: false });
       var loai = key_(r[6]);
       var cham = norm_(r[13]) !== '' && !isNaN(Number(r[13])) ? Number(r[13]) : null;
       if (loai === 'TN') {
@@ -527,13 +528,13 @@ function tinhLaiTatCa_() {
           var dung = chon.length === da.length && chon.every(function (v, k) { return v === da[k]; });
           J = lettersOf_(da); L = dung ? 10 : 0;
         }
-        var fin = cham != null ? cham : (L === '' || L == null ? 0 : Number(L));
-        K = fin >= 5 ? 'ĐÚNG' : 'SAI';
-        a.tnN++; a.tnS += fin;
+        a.tnN++;
+        if (cham == null) { a.cho = true; a.tnCho = true; K = 'CHỜ CHẤM'; }   // L chỉ là gợi ý của máy
+        else { a.tnS += cham; K = cham >= 5 ? 'ĐÚNG' : 'SAI'; }
       } else if (loai === 'TL') {
-        var d = cham != null ? cham : (L === '' || L == null ? null : Number(L));
+        var d = cham;
         a.tlN++;
-        if (d == null || isNaN(d)) { a.cho = true; K = 'CHỜ CHẤM'; } else { a.tlS += d; K = d >= 5 ? 'ĐẠT Ý' : 'THIẾU Ý'; }
+        if (d == null || isNaN(d)) { a.cho = true; a.tlCho = true; K = 'CHỜ CHẤM'; } else { a.tlS += d; K = d >= 5 ? 'ĐẠT Ý' : 'THIẾU Ý'; }
       }
     }
     out.push([J, K, L]);
@@ -545,10 +546,10 @@ function tinhLaiTatCa_() {
   for (var j = 1; j < kd.length; j++) {
     var x = kd[j], mb = norm_(x[13]), t = agg[mb], p = phans[key_(x[4])];
     if (!mb || !t || !p) { res.push([x[8], x[9], x[10], x[11]]); continue; }
-    var diemTN = t.tnN ? round2_(t.tnS / t.tnN) : null;
-    var diemTL = t.tlN && !t.cho ? round2_(t.tlS / t.tlN) : null;
+    var diemTN = t.tnN && !t.tnCho ? round2_(t.tnS / t.tnN) : null;
+    var diemTL = t.tlN && !t.tlCho ? round2_(t.tlS / t.tlN) : null;
     var tong = tinhTong_(diemTN, diemTL, t.tlN > 0, t.cho, p.tyTrongTN);
-    var ketQua = t.cho ? 'CHỜ CHẤM TỰ LUẬN' : (tong >= p.diemDat - 1e-9 ? 'ĐẠT' : 'CHƯA ĐẠT');
+    var ketQua = t.cho ? 'CHỜ CHẤM' : (tong >= p.diemDat - 1e-9 ? 'ĐẠT' : 'CHƯA ĐẠT');
     if (norm_(x[11]).indexOf('nộp trễ') >= 0) ketQua += ' (nộp trễ)';
     res.push([diemTN == null ? '' : diemTN, diemTL == null ? '' : diemTL, tong == null ? '' : tong, ketQua]);
     changed++;

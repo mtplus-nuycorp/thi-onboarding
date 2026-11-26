@@ -35,7 +35,7 @@
         <div class="row">
           <label id="lbPhan" class="hidden">Phần <select id="fPhan" style="width:auto"></select></label>
           <label>Nhóm <select id="fNhom" style="width:auto"></select></label>
-          <button class="btn-ghost" id="btnAuto" title="Dùng sau khi sửa đáp án trong tab CAU_HOI: máy chấm lại phần trắc nghiệm của tất cả bài đã nộp">Chấm lại TN theo đáp án mới</button>
+          <button class="btn-ghost" id="btnAuto" title="Dùng sau khi sửa đáp án trong tab CAU_HOI: cập nhật gợi ý Đúng/Sai của máy cho mọi bài (không đổi điểm bạn đã chấm)">Cập nhật gợi ý TN theo đáp án mới</button>
         </div>
       </div>
       <div id="tabBody"></div>
@@ -91,12 +91,12 @@
   $('btnReload').onclick = function () { if (!confirmBo()) return; B = null; var p = pass(); if (p) load(p).catch(function (ex) { alert(ex.message); }); };
   $('btnAuto').onclick = function () {
     var btn = this;
-    if (!confirm('Máy sẽ chấm lại phần trắc nghiệm của TẤT CẢ bài đã nộp theo đáp án hiện tại trong tab CAU_HOI (câu nào bạn đã tự chấm tay thì giữ điểm của bạn). Tiếp tục?')) return;
+    if (!confirm('Cập nhật gợi ý Đúng/Sai của máy cho phần trắc nghiệm của TẤT CẢ bài theo đáp án hiện tại trong tab CAU_HOI. Điểm bạn đã chấm giữ nguyên. Tiếp tục?')) return;
     btn.disabled = true; btn.textContent = 'Đang chấm lại...';
     api({ action: 'tinhLai', password: pass() }).then(function (r) {
-      return reloadData().then(function () { B = null; render(); alert('Đã chấm lại ' + r.n + ' bài.'); });
+      return reloadData().then(function () { B = null; render(); alert('Đã cập nhật ' + r.n + ' bài.'); });
     }).catch(function (ex) { alert(ex.message); })
-      .then(function () { btn.disabled = false; btn.textContent = 'Chấm lại TN theo đáp án mới'; });
+      .then(function () { btn.disabled = false; btn.textContent = 'Cập nhật gợi ý TN theo đáp án mới'; });
   };
   var saved = pass();
   if (saved) load(saved).catch(function () {});
@@ -224,15 +224,17 @@
     r.items.forEach(function (it) { it.v = it.diem; it.nx = it.nhanXet; });   // v = điểm người chấm (null = theo máy)
     dirty = false;
   }
-  function diemCau(it) { return it.v != null ? it.v : (it.may != null ? it.may : (it.loai === 'TN' ? 0 : null)); }
+  function diemCau(it) { return it.v; }   // mọi câu do người chấm quyết định, máy chỉ gợi ý
   function tamTinh() {
     var tn = B.items.filter(function (x) { return x.loai === 'TN'; }), tl = B.items.filter(function (x) { return x.loai === 'TL'; });
-    var dTN = tn.length ? tn.reduce(function (s, x) { return s + diemCau(x); }, 0) / tn.length : null;
-    var daCham = tl.filter(function (x) { return diemCau(x) != null; });
-    var dTL = tl.length && daCham.length === tl.length ? daCham.reduce(function (s, x) { return s + diemCau(x); }, 0) / tl.length : null;
+    var chamTN = tn.filter(function (x) { return x.v != null; }), chamTL = tl.filter(function (x) { return x.v != null; });
+    var sum = function (a) { return a.reduce(function (s, x) { return s + x.v; }, 0); };
+    var dTN = tn.length && chamTN.length === tn.length ? sum(chamTN) / tn.length : null;
+    var dTL = tl.length && chamTL.length === tl.length ? sum(chamTL) / tl.length : null;
     var w = (B.bai.tyTrongTN == null ? 50 : B.bai.tyTrongTN) / 100, tong = null;
-    if (!tl.length) tong = dTN; else if (dTL != null) tong = dTN == null ? dTL : dTN * w + dTL * (1 - w);
-    return { tn: dTN, tl: dTL, nTL: tl.length, daCham: daCham.length, tong: tong, w: w, nTN: tn.length };
+    var xongTN = !tn.length || dTN != null, xongTL = !tl.length || dTL != null;
+    if (xongTN && xongTL) tong = !tl.length ? dTN : (!tn.length ? dTL : dTN * w + dTL * (1 - w));
+    return { tn: dTN, tl: dTL, nTN: tn.length, nTL: tl.length, cTN: chamTN.length, cTL: chamTL.length, tong: tong, w: w };
   }
 
   function renderBai() {
@@ -249,7 +251,8 @@
 
     if (tn.length) {
       h += '<h3 class="sec">Phần trắc nghiệm <span class="muted">(' + tn.length + ' câu)</span></h3>' +
-        '<p class="muted" style="font-size:13px;margin-top:-4px">Ô <span class="lg lg-ok">xanh lá</span> là đáp án đúng trong Sheet · ô có nhãn <b>“Thí sinh chọn”</b> là lựa chọn của người thi. Thứ tự A–D là thứ tự gốc, không phải thứ tự đã trộn trên đề. Máy đã chấm sẵn, bạn bấm Đúng/Sai hoặc nhập điểm nếu muốn chấm khác.</p>';
+        '<p class="muted" style="font-size:13px;margin-top:-4px">Ô <span class="lg lg-ok">xanh lá</span> là đáp án trong Sheet · nhãn <b>“Thí sinh chọn”</b> là lựa chọn của người thi. Thứ tự A–D là thứ tự gốc, không phải thứ tự đã trộn trên đề. Máy chỉ <b>gợi ý</b> Đúng/Sai, điểm do bạn bấm mới được tính.</p>' +
+        (tn.some(function (x) { return x.v == null && x.may != null; }) ? '<button class="btn-ghost btn-sm" id="btnTheoMay" style="margin-bottom:10px">Chấm theo gợi ý của máy cho các câu trắc nghiệm chưa chấm</button>' : '');
       tn.forEach(function (it) {
         stt++;
         var chon = String(it.traLoi || '').toUpperCase(), da = String(it.dapAn || '').toUpperCase();
@@ -261,12 +264,13 @@
             (c ? '<span class="badge b-blue">Thí sinh chọn</span> ' : '') + (d ? '<span class="badge b-green">Đáp án</span>' : '') + '</span></div>';
         }).join('');
         var mayTxt = it.may == null ? 'chưa có đáp án' : (it.may >= 5 ? '<b style="color:var(--green)">Đúng</b>' : '<b style="color:var(--red)">Sai</b>');
+        var d0 = it.v;
         h += '<div class="q" data-row="' + it.row + '"><div class="row" style="justify-content:space-between"><span class="num"><b>Câu ' + stt + '</b> <span class="muted" style="font-size:12px">' + esc(it.id) + '</span></span>' +
-          (chon ? '' : '<span class="badge b-red">Bỏ trống</span>') + '</div><div class="qh" style="margin-top:6px">' + esc(it.cauHoi) + '</div>' + opts +
-          '<div class="grade"><span class="muted">Máy chấm: ' + mayTxt + '</span><span class="grow"></span>' +
-          '<button class="seg' + (diemCau(it) >= 5 ? ' on-ok' : '') + '" data-set="10">✓ Đúng</button><button class="seg' + (diemCau(it) < 5 ? ' on-bad' : '') + '" data-set="0">✗ Sai</button>' +
-          '<input type="number" class="gDiem" min="0" max="10" step="0.5" value="' + (it.v == null ? '' : it.v) + '" placeholder="' + (it.may == null ? '' : 'máy: ' + f(it.may)) + '" title="Điểm câu này (0-10). Để trống = theo máy chấm">' +
-          (it.v != null ? '<button class="seg" data-set="">↺ Theo máy</button>' : '') + '</div></div>';
+          '<span>' + (chon ? '' : '<span class="badge b-red">Bỏ trống</span> ') + (d0 == null ? '<span class="badge b-amber">Chưa chấm</span>' : '<span class="badge ' + (d0 >= 5 ? 'b-green' : 'b-red') + '">' + f(d0) + ' điểm</span>') + '</span></div><div class="qh" style="margin-top:6px">' + esc(it.cauHoi) + '</div>' + opts +
+          '<div class="grade"><span class="muted">Máy gợi ý: ' + mayTxt + '</span><span class="grow"></span>' +
+          '<button class="seg' + (d0 != null && d0 >= 5 ? ' on-ok' : '') + '" data-set="10">✓ Đúng</button><button class="seg' + (d0 != null && d0 < 5 ? ' on-bad' : '') + '" data-set="0">✗ Sai</button>' +
+          '<input type="number" class="gDiem" min="0" max="10" step="0.5" value="' + (it.v == null ? '' : it.v) + '" placeholder="điểm 0-10" title="Điểm câu này (0-10)">' +
+          (it.v != null ? '<button class="seg" data-set="">↺ Bỏ chấm</button>' : '') + '</div></div>';
       });
     }
     if (tl.length) {
@@ -280,12 +284,16 @@
           (it.huongDan ? '<details open class="hd"><summary>Hướng dẫn chấm / đáp án gợi ý</summary><div class="feedback">' + esc(it.huongDan) + '</div></details>' : '<div class="hint">Câu này chưa có hướng dẫn chấm.</div>') +
           '<div class="hint" style="margin-top:8px">Bài làm của thí sinh:</div><div class="answer-text">' + (esc(it.traLoi) || '<i class="muted">(bỏ trống)</i>') + '</div>' +
           '<div class="grade"><span class="muted">Điểm:</span>' + [0, 2.5, 5, 7.5, 10].map(function (v) { return '<button class="seg' + (it.v === v ? ' on-sel' : '') + '" data-set="' + v + '">' + f(v) + '</button>'; }).join('') +
-          '<input type="number" class="gDiem" min="0" max="10" step="0.5" value="' + (it.v == null ? (it.may == null ? '' : it.may) : it.v) + '" placeholder="0-10">' +
+          '<input type="number" class="gDiem" min="0" max="10" step="0.5" value="' + (it.v == null ? '' : it.v) + '" placeholder="0-10">' +
           '<input type="text" class="gNx grow" placeholder="Nhận xét (không bắt buộc)" value="' + esc(it.nx) + '"></div></div>';
       });
     }
     $('tabBody').innerHTML = h;
     $('btnBack').onclick = function () { if (!confirmBo()) return; B = null; render(); };
+    if ($('btnTheoMay')) $('btnTheoMay').onclick = function () {
+      B.items.forEach(function (x) { if (x.loai === 'TN' && x.v == null && x.may != null) x.v = x.may; });
+      dirty = true; var y = window.scrollY; renderBai(); window.scrollTo(0, y);
+    };
     if ($('btnPrev')) $('btnPrev').onclick = function () { if (confirmBo()) moBai(dsHienTai[idx - 1]); };
     if ($('btnNext')) $('btnNext').onclick = function () { if (confirmBo()) moBai(dsHienTai[idx + 1]); };
 
@@ -311,8 +319,8 @@
 
   function drawBar() {
     var t = tamTinh();
-    $('barSum').innerHTML = (t.nTN ? '<span class="sumbox">TN <b>' + f(t.tn) + '</b>/10</span>' : '') +
-      (t.nTL ? '<span class="sumbox">TL <b>' + (t.tl == null ? t.daCham + '/' + t.nTL + ' câu đã chấm' : f(t.tl) + '</b>/10') + (t.tl == null ? '</b>' : '') + '</span>' : '') +
+    var part = function (lb, d, c, n) { return n ? '<span class="sumbox">' + lb + ' ' + (d == null ? '<b>' + c + '/' + n + '</b> câu đã chấm' : '<b>' + f(d) + '</b>/10') + '</span>' : ''; };
+    $('barSum').innerHTML = part('TN', t.tn, t.cTN, t.nTN) + part('TL', t.tl, t.cTL, t.nTL) +
       '<span class="sumbox">Tổng <b>' + f(t.tong) + '</b>' + (t.nTN && t.nTL ? ' <span class="muted" style="font-size:12px">(TN ' + Math.round(t.w * 100) + '% · TL ' + Math.round((1 - t.w) * 100) + '%)</span>' : '') + '</span>' +
       (dirty ? '<span class="badge b-amber">Chưa lưu</span>' : '<span class="badge b-green">Đã lưu</span>');
     var idx = dsHienTai.indexOf(B.maBai);
@@ -320,15 +328,15 @@
   }
 
   function luu(next) {
-    var changed = B.items.filter(function (it) { return it.v !== it.diem || (it.loai === 'TL' && String(it.nx || '') !== String(it.nhanXet || '')); });
+    var changed = B.items.filter(function (it) { return it.v !== it.diem || String(it.nx || '') !== String(it.nhanXet || ''); });
     var idx = dsHienTai.indexOf(B.maBai);
     if (!changed.length) { if (next && idx >= 0 && idx < dsHienTai.length - 1) moBai(dsHienTai[idx + 1]); else { $('barMsg').style.color = 'var(--muted)'; $('barMsg').textContent = 'Không có gì thay đổi'; } return; }
-    var thieu = B.items.filter(function (it) { return it.loai === 'TL' && diemCau(it) == null; }).length;
+    var thieu = B.items.filter(function (it) { return it.v == null; }).length;
     $('btnSave').disabled = $('btnSaveNext').disabled = true;
     $('barMsg').style.color = 'var(--muted)'; $('barMsg').textContent = 'Đang lưu...';
     api({ action: 'chamBai', password: pass(), traVe: !next, items: changed.map(function (it) { return { row: it.row, maBai: B.maBai, id: it.id, diem: it.v == null ? '' : it.v, nhanXet: it.nx || '' }; }) })
       .then(function (r) {
-        $('barMsg').style.color = 'var(--green)'; $('barMsg').textContent = 'Đã lưu ' + r.saved + ' câu' + (thieu ? ' · còn ' + thieu + ' câu tự luận chưa chấm' : '');
+        $('barMsg').style.color = 'var(--green)'; $('barMsg').textContent = 'Đã lưu ' + r.saved + ' câu' + (thieu ? ' · còn ' + thieu + ' câu chưa chấm' : ' · đã chấm xong bài');
         dirty = false;
         reloadData().catch(function () {});
         if (next) moBai(dsHienTai[idx + 1]);
