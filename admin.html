@@ -118,7 +118,9 @@
     var keepP = $('fPhan').value, keepN = $('fNhom').value;
     $('fPhan').innerHTML = '<option value="">Tất cả phần</option>' + phansMo().map(function (p) { return '<option value="' + esc(p.ma) + '">' + esc(p.ma + '. ' + p.ten) + '</option>'; }).join('');
     var nhoms = {}; D.nhanVien.forEach(function (n) { if (n.nhom) nhoms[n.nhom] = 1; });
-    $('fNhom').innerHTML = '<option value="">Tất cả nhóm</option>' + Object.keys(nhoms).map(function (n) { return '<option>' + esc(n) + '</option>'; }).join('');
+    var chuaNhom = D.nhanVien.filter(function (n) { return !n.nhom; }).length;
+    $('fNhom').innerHTML = '<option value="">Tất cả nhóm</option>' + Object.keys(nhoms).map(function (n) { return '<option>' + esc(n) + '</option>'; }).join('') +
+      (chuaNhom ? '<option value="__chua">Chưa có nhóm (' + chuaNhom + ')</option>' : '');
     $('fPhan').value = keepP; $('fNhom').value = keepN;
   }
   $('fPhan').onchange = render; $('fNhom').onchange = function () { if (B) { render(); } else render(); };
@@ -133,7 +135,7 @@
 
   function phansMo() { return D.phans.filter(function (p) { return p.mo || D.ketQua.some(function (k) { return k.phan === p.ma; }); }); }
   function phansSel() { var v = $('fPhan').value; return D.phans.filter(function (p) { return (v ? p.ma === v : p.mo); }); }
-  function nvSel() { var n = $('fNhom').value; return D.nhanVien.filter(function (x) { return !n || x.nhom === n; }); }
+  function nvSel() { var n = $('fNhom').value; return D.nhanVien.filter(function (x) { return !n || (n === '__chua' ? !x.nhom : x.nhom === n); }); }
   function kqOf(ma, phan) { return D.ketQua.filter(function (k) { return k.ma.toUpperCase() === ma.toUpperCase() && (!phan || k.phan === phan); }); }
   function best(list) { var b = null; list.forEach(function (k) { if (k.tong != null && (b == null || k.tong > b)) b = k.tong; }); return b; }
   function nvMap() { var m = {}; D.nhanVien.forEach(function (n) { m[n.ma.toUpperCase()] = n; }); return m; }
