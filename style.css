@@ -78,3 +78,40 @@ tr:hover td { background: #fafbfd; }
   .phan { flex-direction: column; align-items: stretch; }
   .score-big { font-size: 44px; }
 }
+/* ---- Trang quản lý: chấm bài theo phần ---- */
+.pcards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; }
+.pcard { text-align: left; background: #f7f9fc; border: 2px solid var(--line); border-radius: 12px; padding: 12px 14px; color: var(--text); font-weight: 400; }
+.pcard:hover { border-color: var(--navy-2); }
+.pcard.on { border-color: var(--navy); background: #eef3fc; box-shadow: 0 2px 8px rgba(31,56,100,.12); }
+.pc-ma { font-size: 12px; font-weight: 700; color: var(--navy); }
+.pc-ten { font-weight: 600; margin: 2px 0 8px; min-height: 2.6em; }
+.pc-num { display: flex; justify-content: space-between; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 13px; }
+.pc-num b { font-size: 18px; color: var(--navy); }
+.chip { background: #eef0f4; color: var(--text); padding: 7px 12px; border-radius: 99px; font-weight: 600; font-size: 13px; }
+.chip b { background: #fff; border-radius: 99px; padding: 0 7px; margin-left: 4px; }
+.chip.on { background: var(--navy); color: #fff; }
+.chip.on b { color: var(--navy); }
+tr.click { cursor: pointer; }
+tr.click:hover td { background: #eef3fc; }
+tr.dim td { color: var(--muted); background: #fcfcfd; }
+.btn-sm { padding: 6px 12px; font-size: 13px; white-space: nowrap; }
+.b-blue { background: #e3ecfb; color: var(--navy-2); }
+.baihead { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; background: #f7f9fc; border-radius: 12px; padding: 14px 16px; margin-bottom: 8px; }
+.bh-ten { font-size: 20px; font-weight: 700; color: var(--navy); }
+.bh-meta { text-align: right; font-size: 14px; }
+h3.sec { margin: 22px 0 10px; padding-bottom: 6px; border-bottom: 2px solid var(--navy); color: var(--navy); }
+.opt.ro { cursor: default; }
+.opt.right { border: 2px dashed var(--green); background: var(--green-bg); }
+.lg { padding: 0 6px; border-radius: 4px; }
+.lg-ok { background: var(--green-bg); color: var(--green); font-weight: 700; }
+.grade { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--line); }
+.grade input[type=number] { width: 110px; padding: 7px 10px; }
+.grade input[type=text] { padding: 7px 10px; min-width: 200px; }
+.seg { background: #eef0f4; color: var(--text); padding: 7px 12px; font-size: 13px; }
+.seg.on-ok { background: var(--green); color: #fff; }
+.seg.on-bad { background: var(--red); color: #fff; }
+.seg.on-sel { background: var(--navy); color: #fff; }
+details.hd summary { cursor: pointer; color: var(--navy-2); font-weight: 600; font-size: 13px; }
+.sumbox { background: #f3f6fb; border-radius: 8px; padding: 6px 10px; }
+.sumbox b { font-size: 17px; color: var(--navy); }
+@media (max-width: 700px) { .bh-meta { text-align: left; } }
