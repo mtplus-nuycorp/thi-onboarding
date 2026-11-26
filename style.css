@@ -116,3 +116,4 @@ details.hd summary { cursor: pointer; color: var(--navy-2); font-weight: 600; fo
 .sumbox b { font-size: 17px; color: var(--navy); }
 @media (max-width: 700px) { .bh-meta { text-align: left; } }
 .seg.on-part { background: var(--amber); color: #fff; }
+.opt.ro input { accent-color: var(--navy-2); pointer-events: none; }
