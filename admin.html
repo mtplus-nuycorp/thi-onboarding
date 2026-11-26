@@ -252,6 +252,15 @@
     var sk = chon.split('').filter(function (c) { return da.indexOf(c) >= 0; }).length;
     return { chon: chon, da: da, nDA: da.length, nOpt: it.options.filter(function (o) { return o; }).length, sk: sk, sw: chon.length - sk };
   }
+  // Chấm tay câu TN (chưa có đáp án chính thức): các mức hay dùng + ô nhập điểm tự do
+  function nutTay(it, th) {
+    var m = r2(th.moiTN), muc = [
+      [m, '✓ Đúng hết +' + f(m), 'on-ok'], [r2(th.moiTN / 2), 'Đúng 1 nửa +' + f(r2(th.moiTN / 2)), 'on-part'],
+      [-th.truSai, 'Sai 1 đáp án −' + f(th.truSai), 'on-bad'], [-2 * th.truSai, 'Sai 2 đáp án −' + f(2 * th.truSai), 'on-bad'],
+      [-m, 'Bỏ trống −' + f(m), 'on-bad']];
+    return muc.map(function (x) { return '<button class="seg' + (it.v === x[0] ? ' ' + x[2] : '') + '" data-set="' + x[0] + '">' + x[1] + '</button>'; }).join('') +
+      '<input type="number" class="gDiem" data-min="' + r2(-m - 2 * th.truSai) + '" data-max="' + m + '" step="0.01" value="' + (it.v == null ? '' : it.v) + '" placeholder="tự nhập" title="Nhập điểm câu (có thể âm), vd 0,13" style="width:100px">';
+  }
   function setKW(it, k, w) { var i = infoTN(it); it.k = k; it.w = w; it.v = diemTN(k, w, i.nDA || 1); it.nx = 'đúng ' + k + '/' + i.nDA + ' · nhầm ' + w; }
 
   function renderBai() {
@@ -269,7 +278,7 @@
     if (tn.length) {
       var th = T();
       h += '<h3 class="sec">Phần trắc nghiệm <span class="muted">(' + tn.length + ' câu · tối đa ' + f(th.maxTN) + ' điểm · mỗi câu tối đa ' + f(r2(th.moiTN)) + ')</span></h3>' +
-        '<p class="muted" style="font-size:13px;margin-top:-4px">Điểm câu = (số đáp án đúng đã chọn ÷ tổng đáp án đúng) × ' + f(r2(th.moiTN)) + ' − ' + f(th.truSai) + ' × số đáp án chọn nhầm. Bỏ trống trừ cả điểm câu (−' + f(r2(th.moiTN)) + '). Tổng trắc nghiệm thấp nhất 0.<br>Phương án hiện đúng thứ tự A–D trên đề của thí sinh, ô được tích ☑ là ô thí sinh đã chọn. Máy chỉ <b>gợi ý</b>, điểm do bạn bấm mới được tính.</p>' +
+        '<p class="muted" style="font-size:13px;margin-top:-4px">Mỗi câu tối đa +' + f(r2(th.moiTN)) + ' · chọn sai mỗi đáp án −' + f(th.truSai) + ' · bỏ trống −' + f(r2(th.moiTN)) + ' · tổng trắc nghiệm thấp nhất 0. Câu đúng một phần: bấm "Đúng 1 nửa" hoặc tự nhập điểm (vd đúng 1/2 và chọn sai 1 = ' + f(r2(th.moiTN / 2 - th.truSai)) + ').<br>Phương án hiện đúng thứ tự A–D trên đề của thí sinh, ô có dấu tích ☑ là ô thí sinh đã chọn.</p>' +
         (HIEN_DAP_AN && tn.some(function (x) { return x.v == null; }) ? '<button class="btn-ghost btn-sm" id="btnTheoMay" style="margin-bottom:10px">Chấm theo gợi ý của máy cho các câu trắc nghiệm chưa chấm</button>' : '');
       tn.forEach(function (it) {
         stt++;
@@ -297,7 +306,9 @@
         h += '<div class="q" data-row="' + it.row + '"><div class="row" style="justify-content:space-between"><span class="num"><b>Câu ' + stt + '</b> <span class="muted" style="font-size:12px">' + esc(it.id) + '</span></span>' +
           '<span>' + (chon ? '' : '<span class="badge b-red">Bỏ trống</span> ') + badge + '</span></div><div class="qh" style="margin-top:6px">' + esc(it.cauHoi) + '</div>' + opts +
           (HIEN_DAP_AN ? '<div class="grade"><span class="muted">Máy gợi ý: ' + mayTxt + '</span></div>' : '') +
-          '<div class="grade"' + (HIEN_DAP_AN ? ' style="border-top:0;padding-top:0"' : '') + '>' + (I.nDA ? '<span class="muted">Đáp án đúng đã chọn:</span>' + nutK + '<span style="width:12px"></span><span class="muted">Chọn nhầm:</span>' + nutW : '<span class="muted">Câu chưa có đáp án trong Sheet.</span>') +
+          (HIEN_DAP_AN
+            ? '<div class="grade" style="border-top:0;padding-top:0">' + (I.nDA ? '<span class="muted">Đáp án đúng đã chọn:</span>' + nutK + '<span style="width:12px"></span><span class="muted">Chọn nhầm:</span>' + nutW : '<span class="muted">Câu chưa có đáp án trong Sheet.</span>')
+            : '<div class="grade"><span class="muted">Điểm câu:</span>' + nutTay(it, th)) +
           '<span class="grow"></span>' + (it.v != null ? '<button class="seg" data-set="">↺ Bỏ chấm</button>' : '') + '</div></div>';
       });
     }
@@ -332,7 +343,7 @@
       var it = B.items.filter(function (x) { return x.row === +card.getAttribute('data-row'); })[0];
       var setV = function (v) { it.v = v; dirty = true; var y = window.scrollY; renderBai(); window.scrollTo(0, y); };
       Array.prototype.forEach.call(card.querySelectorAll('[data-set]'), function (btn) {
-        btn.onclick = function () { var s = btn.getAttribute('data-set'); if (s === '' && it.loai === 'TN') { it.k = it.w = undefined; it.nx = ''; } setV(s === '' ? null : +s); };
+        btn.onclick = function () { var s = btn.getAttribute('data-set'); if (it.loai === 'TN') { it.k = it.w = undefined; it.nx = ''; } setV(s === '' ? null : +s); };
       });
       var redraw = function () { dirty = true; var y = window.scrollY; renderBai(); window.scrollTo(0, y); };
       Array.prototype.forEach.call(card.querySelectorAll('[data-k]'), function (btn) {
@@ -343,9 +354,10 @@
       });
       var inp = card.querySelector('.gDiem');
       if (inp) inp.onchange = function () {
-        var s = inp.value.trim().replace(',', '.'), mx = +inp.getAttribute('data-max');
+        var s = inp.value.trim().replace(',', '.'), mx = +inp.getAttribute('data-max'), mn = +(inp.getAttribute('data-min') || 0);
+        if (it.loai === 'TN') { it.k = it.w = undefined; it.nx = ''; }
         if (s === '') { setV(null); return; }
-        var n = +s; if (isNaN(n) || n < 0 || n > mx + 0.001) { alert('Điểm câu này từ 0 đến ' + f(mx)); inp.value = it.v == null ? '' : it.v; return; }
+        var n = +s; if (isNaN(n) || n < mn - 0.001 || n > mx + 0.001) { alert('Điểm câu này từ ' + f(mn) + ' đến ' + f(mx)); inp.value = it.v == null ? '' : it.v; return; }
         setV(r2(n));
       };
       var nx = card.querySelector('.gNx');
