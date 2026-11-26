@@ -180,13 +180,24 @@
   function renderExam() {
     var ex = state.exam;
     $('examTitle').textContent = ex.phan.ma + '. ' + ex.phan.ten;
+    function cachTinhDiem(ex) {
+      var t = ex.thang; if (!t) return '';
+      var nTN = ex.questions.filter(function (q) { return q.loai === 'TN'; }).length, nTL = ex.questions.length - nTN;
+      var g = function (n) { return (Math.round(n * 100) / 100).toString().replace('.', ','); };
+      var li = [];
+      if (nTN) li.push('<b>Trắc nghiệm (' + nTN + ' câu, tối đa ' + g(t.maxTN) + ' điểm):</b> mỗi câu có thể có <b>nhiều đáp án đúng</b>. Chọn đủ và đúng hết được <b>' + g(t.moiTN) + ' điểm</b>/câu; chọn đúng một phần được điểm theo tỷ lệ (vd câu có 2 đáp án đúng, chọn đúng 1 được ' + g(t.moiTN / 2) + '); <b>mỗi đáp án chọn sai bị trừ ' + g(t.truSai) + ' điểm</b> (sai 2 đáp án trừ ' + g(2 * t.truSai) + '); <b>bỏ trống bị trừ cả điểm câu</b> (−' + g(t.moiTN) + '). Điểm trắc nghiệm thấp nhất là 0.');
+      if (nTL) li.push('<b>Tự luận (' + nTL + ' câu, tối đa ' + g(t.maxTL) + ' điểm):</b> mỗi câu tối đa ' + g(t.moiTL) + ' điểm, người chấm chấm theo mức độ đầy đủ và đúng ý.');
+      return '<div style="margin-top:10px;background:#fff6e0;border-left:3px solid var(--amber);padding:10px 12px;border-radius:6px;color:var(--text);font-size:14px"><b>Cách tính điểm (thang 10)</b><ul style="margin:6px 0 0;padding-left:18px">' +
+        li.map(function (x) { return '<li style="margin-bottom:4px">' + x + '</li>'; }).join('') + '</ul></div>';
+    }
     $('examMeta').innerHTML = esc('Mã đề: ' + ex.maDe + ' · ' + ex.questions.length + ' câu · ' + ex.phan.phut + ' phút') +
+      cachTinhDiem(ex) +
       (ex.boiCanh ? '<div style="margin-top:10px;background:#eef3fc;border-left:3px solid var(--navy-2);padding:10px 12px;border-radius:6px;color:var(--text)"><b>Bối cảnh doanh nghiệp của bạn:</b> ' + esc(ex.boiCanh) + '<br><span class="muted" style="font-size:13px">Làm các câu tự luận có ghi bối cảnh theo đúng doanh nghiệp này.</span></div>' : '');
     $('maDeTop').textContent = ex.maDe;
     $('qList').innerHTML = ex.questions.map(function (q, i) {
       var head = '<div class="qh"><span class="num">Câu ' + (i + 1) + (q.loai === 'TL' ? ' (tự luận)' : '') + '.</span> ' + esc(q.text) + '</div>';
       if (q.loai === 'TN') {
-        return '<div class="q" id="q' + i + '">' + head + '<div class="hint">Có thể có một hoặc nhiều đáp án đúng. Phải chọn đủ và đúng mới được điểm.</div>' +
+        return '<div class="q" id="q' + i + '">' + head + '<div class="hint">Có thể có một hoặc nhiều đáp án đúng. Mỗi đáp án chọn sai bị trừ điểm, bỏ trống bị trừ cả điểm câu.</div>' +
           q.options.map(function (o, k) {
             var checked = state.answers[i].indexOf(k) >= 0;
             return '<label class="opt' + (checked ? ' sel' : '') + '"><input type="checkbox" data-q="' + i + '" data-k="' + k + '"' + (checked ? ' checked' : '') + '>' +

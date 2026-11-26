@@ -213,7 +213,8 @@ function apiStart(req) {
 
   return {
     attemptId: attemptId, maDe: maDe, phan: { ma: p.ma, ten: p.ten, phut: p.phut },
-    batDau: now.getTime(), hetGio: now.getTime() + p.phut * 60000, boiCanh: boiCanh, questions: out
+    batDau: now.getTime(), hetGio: now.getTime() + p.phut * 60000, boiCanh: boiCanh, questions: out,
+    thang: thang_(p, tn.length, tl.length)
   };
 }
 
@@ -251,6 +252,7 @@ function apiSubmit(req) {
   var phutLam = round2_((now - batDau) / 60000);
   var tre = phutLam > p.phut + GRACE_MIN;
 
+  var thSub = thang_(p, items.filter(function (x) { return x.t === 'TN'; }).length, items.filter(function (x) { return x.t !== 'TN'; }).length);
   // --- Chấm trắc nghiệm ---
   var review = [], chiTiet = [], tlJobs = [];
   var nTN = 0, dungTN = 0;
@@ -266,7 +268,7 @@ function apiSubmit(req) {
       if (dung) dungTN++;
       var dapAnHienThi = q.dapAn.map(function (g) { return it.o.indexOf(g); }).filter(function (d) { return d >= 0; }).sort();
       review.push({ stt: i + 1, loai: 'TN', text: q.text, options: it.o.map(function (g) { return q.opts[g]; }), chon: chon.sort(), dapAn: dapAnHienThi, dung: dung });
-      chiTiet.push([it.id, 'TN', q.text, lettersOf_(chonGoc), lettersOf_(q.dapAn), 'CHỜ CHẤM', goiY_(chonGoc, q.dapAn), '']);   // cột L = máy gợi ý, người chấm quyết định ở cột N
+      chiTiet.push([it.id, 'TN', q.text, lettersOf_(chonGoc), lettersOf_(q.dapAn), 'CHỜ CHẤM', goiY_(chonGoc, q.dapAn, thSub.moiTN), '']);   // cột L = máy gợi ý, người chấm quyết định ở cột N
     } else {
       var tra = norm_(answers[i]);
       var rv = { stt: i + 1, id: it.id, loai: 'TL', text: q.text, traLoi: tra, diem: null, nhanXet: '' };
@@ -330,11 +332,15 @@ function tinhTong_(diemTN, diemTL, coTL, choCham, tyTrongTN) {
   return round2_(diemTN * w + diemTL * (1 - w));
 }
 
-/** Gợi ý của máy cho 1 câu TN: 1 = đúng hết, 0<x<1 = đúng một phần (không chọn nhầm), 0 = sai. */
-function goiY_(chon, da) {
-  if (!da.length || !chon.length) return 0;
-  if (chon.some(function (c) { return da.indexOf(c) < 0; })) return 0;
-  return round2_(chon.length / da.length);
+/**
+ * Điểm gợi ý của máy cho 1 câu TN (moi = điểm tối đa của câu):
+ * (số đáp án đúng đã chọn / tổng số đáp án đúng) × moi − TRU_SAI_TN × số đáp án chọn nhầm; bỏ trống = −moi.
+ */
+function goiY_(chon, da, moi) {
+  if (!da.length) return 0;
+  if (!chon.length) return round2_(-moi);          // bỏ trống: trừ cả điểm câu
+  var k = chon.filter(function (c) { return da.indexOf(c) >= 0; }).length, w = chon.length - k;
+  return round2_(k / da.length * moi - w * TRU_SAI_TN);
 }
 
 function lettersOf_(arr) { return arr.map(function (g) { return 'ABCD'.charAt(g); }).join(','); }
@@ -438,6 +444,13 @@ function apiBaiThi(req) {
     var id = norm_(r[0]); if (!id) return;
     bank[id] = { opts: [norm_(r[4]), norm_(r[5]), norm_(r[6]), norm_(r[7])], dapAn: lettersOf_(parseAnswer_(r[8])), hd: norm_(r[9]) };
   });
+  var thuTu = {};      // thứ tự phương án đã trộn trên đề của thí sinh (lấy từ PHIEN)
+  var ph = sh_(SHEET.PHIEN).getDataRange().getValues();
+  for (var pi = 1; pi < ph.length; pi++) {
+    if (norm_(ph[pi][0]) !== maBai) continue;
+    try { JSON.parse(ph[pi][5]).forEach(function (x) { if (x.o) thuTu[x.id] = x.o; }); } catch (e) {}
+    break;
+  }
   var items = [], data = sh_(SHEET.CHI_TIET).getDataRange().getValues();
   for (var i = 1; i < data.length; i++) {
     var r = data[i];
@@ -445,7 +458,7 @@ function apiBaiThi(req) {
     var q = bank[norm_(r[5])] || { opts: [], dapAn: '', hd: '' };
     items.push({
       row: i + 1, id: norm_(r[5]), loai: key_(r[6]), cauHoi: norm_(r[7]), traLoi: norm_(r[8]),
-      dapAn: key_(r[6]) === 'TN' ? (q.dapAn || norm_(r[9])) : '', options: q.opts, huongDan: q.hd,
+      dapAn: key_(r[6]) === 'TN' ? (q.dapAn || norm_(r[9])) : '', options: q.opts, huongDan: q.hd, thuTu: thuTu[norm_(r[5])] || null,
       may: r[11] === '' || r[11] == null ? null : Number(r[11]),
       diem: norm_(r[13]) === '' ? null : Number(r[13]), nhanXet: norm_(r[12])
     });
@@ -477,8 +490,11 @@ function apiChamBai(req) {
       if (norm_(cur[0]) !== norm_(it.maBai) || norm_(cur[5]) !== norm_(it.id)) throw new Error('Dữ liệu đã thay đổi, hãy tải lại trang.');
       var trong = it.diem === '' || it.diem == null;
       var d = Number(it.diem);
-      if (!trong && (isNaN(d) || d < 0)) throw new Error('Điểm không hợp lệ');
-      if (!trong && key_(cur[6]) === 'TN') d = Math.min(1, d);   // 1 = đúng hết, 0<d<1 = đúng một phần, 0 = sai
+      if (!trong && isNaN(d)) throw new Error('Điểm không hợp lệ');
+      if (!trong && key_(cur[6]) === 'TN') {      // TN: điểm của câu = phần đúng − 0,5 × số đáp án chọn nhầm (có thể âm)
+        var dt = dem[norm_(cur[0])], mt = thang_(phans[dt.phan], dt.tn, dt.tl).moiTN;
+        if (d > mt + 0.01 || d < -mt - 4 * TRU_SAI_TN) throw new Error('Điểm câu ' + it.id + ' không hợp lệ');
+      } else if (!trong && d < 0) throw new Error('Điểm không hợp lệ');
       if (!trong && key_(cur[6]) === 'TL') {
         var dc = dem[norm_(cur[0])], mx = round2_(thang_(phans[dc.phan], dc.tn, dc.tl).moiTL);
         if (d > mx + 0.01) throw new Error('Điểm câu ' + it.id + ' tối đa ' + mx);
@@ -526,8 +542,8 @@ function menuTinhLai() {
 
 /**
  * Thang điểm 10 = Trắc nghiệm (tỷ trọng cột F, mặc định 50% = 5đ) + Tự luận (phần còn lại = 5đ).
- * - TN: đúng hết được (điểm TN tối đa / số câu TN), đúng một phần được theo tỷ lệ đáp án đúng đã chọn,
- *   sai (chọn nhầm hoặc bỏ trống) bị trừ TRU_SAI_TN; thấp nhất 0.
+ * - TN: mỗi câu = (đáp án đúng đã chọn / tổng đáp án đúng) × (điểm TN tối đa / số câu) − 0,5 × số đáp án chọn nhầm;
+ *   bỏ trống = trừ cả điểm câu. Tổng TN thấp nhất 0.
  * - TL: điểm tối đa chia đều cho các câu; người chấm nhập điểm từng câu trong khoảng đó.
  */
 function thang_(p, nTN, nTL) {
@@ -539,8 +555,8 @@ function thang_(p, nTN, nTL) {
 
 /**
  * Tính lại điểm cho mọi bài:
- * - Máy chỉ cập nhật GỢI Ý cho câu TN theo đáp án hiện tại trong CAU_HOI (cột L: 1 = đúng, 0 = sai).
- * - Điểm thật là quyết định của người chấm ở cột N: TN 1 = Đúng / 0 = Sai; TL = số điểm của câu.
+ * - Máy chỉ cập nhật GỢI Ý điểm câu TN theo đáp án hiện tại trong CAU_HOI (cột L).
+ * - Điểm thật là quyết định của người chấm ở cột N (số điểm của câu, TN có thể âm).
  *   Câu nào trống thì bài còn CHỜ CHẤM.
  */
 function tinhLaiTatCa_() {
@@ -552,7 +568,7 @@ function tinhLaiTatCa_() {
   var agg = {}, i, r, m;
   for (i = 1; i < data.length; i++) {          // lượt 1: đếm số câu mỗi bài
     r = data[i]; m = norm_(r[0]); if (!m) continue;
-    var a0 = agg[m] || (agg[m] = { phan: key_(r[4]), tnN: 0, tnCong: 0, tnSai: 0, tnCho: false, tlN: 0, tlS: 0, tlCho: false });
+    var a0 = agg[m] || (agg[m] = { phan: key_(r[4]), tnN: 0, tnS: 0, tnCho: false, tlN: 0, tlS: 0, tlCho: false });
     if (key_(r[6]) === 'TN') a0.tnN++; else if (key_(r[6]) === 'TL') a0.tlN++;
   }
   Object.keys(agg).forEach(function (k) { var a = agg[k]; a.t = thang_(phans[a.phan], a.tnN, a.tlN); });
@@ -566,11 +582,10 @@ function tinhLaiTatCa_() {
       if (loai === 'TN') {
         var da = bank[norm_(r[5])];
         if (da && da.length) {
-          J = lettersOf_(da); L = goiY_(parseAnswer_(r[8]), da);
+          J = lettersOf_(da); L = goiY_(parseAnswer_(r[8]), da, a.t.moiTN);
         }
         if (cham == null) { a.tnCho = true; K = 'CHỜ CHẤM'; }
-        else if (cham > 0) { a.tnCong += Math.min(1, cham); K = cham >= 1 ? 'ĐÚNG' : 'ĐÚNG 1 PHẦN'; }
-        else { a.tnSai++; K = 'SAI'; }
+        else { a.tnS += cham; K = cham >= a.t.moiTN - 0.01 ? 'ĐÚNG' : (cham > 0 ? 'ĐÚNG 1 PHẦN' : 'SAI'); }
       } else if (loai === 'TL') {
         if (cham == null) { a.tlCho = true; K = 'CHỜ CHẤM'; }
         else { a.tlS += cham; K = cham >= a.t.moiTL / 2 - 1e-9 ? 'ĐẠT Ý' : 'THIẾU Ý'; }
@@ -585,7 +600,7 @@ function tinhLaiTatCa_() {
   for (var j = 1; j < kd.length; j++) {
     var x = kd[j], mb = norm_(x[13]), t = agg[mb], p = phans[key_(x[4])];
     if (!mb || !t || !p) { res.push([x[8], x[9], x[10], x[11]]); continue; }
-    var diemTN = t.tnN && !t.tnCho ? round2_(Math.max(0, t.tnCong * t.t.moiTN - t.tnSai * TRU_SAI_TN)) : null;
+    var diemTN = t.tnN && !t.tnCho ? round2_(Math.min(t.t.maxTN, Math.max(0, t.tnS))) : null;
     var diemTL = t.tlN && !t.tlCho ? round2_(Math.min(t.t.maxTL, t.tlS)) : null;
     var cho = t.tnCho || t.tlCho;
     var tong = cho ? null : round2_((diemTN || 0) + (diemTL || 0));
