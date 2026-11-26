@@ -55,6 +55,7 @@
   var D = null, tab = 'cham', sortState = {};
   var phanCham = '', loc = 'all', timTen = '';   // trạng thái màn danh sách chấm
   var B = null, dirty = false, dsHienTai = [];   // bài đang chấm
+  var HIEN_DAP_AN = false;   // đáp án trong Sheet chưa chốt: ẩn đáp án + gợi ý của máy. Đổi thành true khi có đáp án chính thức
   $('appName').textContent = 'QUẢN LÝ · ' + (C.TEN_CHUONG_TRINH || 'THI');
 
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
@@ -269,7 +270,7 @@
       var th = T();
       h += '<h3 class="sec">Phần trắc nghiệm <span class="muted">(' + tn.length + ' câu · tối đa ' + f(th.maxTN) + ' điểm · mỗi câu tối đa ' + f(r2(th.moiTN)) + ')</span></h3>' +
         '<p class="muted" style="font-size:13px;margin-top:-4px">Điểm câu = (số đáp án đúng đã chọn ÷ tổng đáp án đúng) × ' + f(r2(th.moiTN)) + ' − ' + f(th.truSai) + ' × số đáp án chọn nhầm. Bỏ trống trừ cả điểm câu (−' + f(r2(th.moiTN)) + '). Tổng trắc nghiệm thấp nhất 0.<br>Phương án hiện đúng thứ tự A–D trên đề của thí sinh, ô được tích ☑ là ô thí sinh đã chọn. Máy chỉ <b>gợi ý</b>, điểm do bạn bấm mới được tính.</p>' +
-        (tn.some(function (x) { return x.v == null; }) ? '<button class="btn-ghost btn-sm" id="btnTheoMay" style="margin-bottom:10px">Chấm theo gợi ý của máy cho các câu trắc nghiệm chưa chấm</button>' : '');
+        (HIEN_DAP_AN && tn.some(function (x) { return x.v == null; }) ? '<button class="btn-ghost btn-sm" id="btnTheoMay" style="margin-bottom:10px">Chấm theo gợi ý của máy cho các câu trắc nghiệm chưa chấm</button>' : '');
       tn.forEach(function (it) {
         stt++;
         var I = infoTN(it), chon = I.chon, da = I.da;
@@ -284,7 +285,7 @@
           return '<label class="opt ro' + (c ? ' sel' : '') + '"><input type="checkbox" tabindex="-1" onclick="return false"' + (c ? ' checked' : '') + '><span class="letter">' + L + '.</span><span>' + esc(o) + '</span></label>';
         }).join('');
         opts = '<div class="hint" style="font-size:13px;color:var(--text)"><b>Thí sinh chọn:</b> ' + (chonDe.length ? '<b style="color:var(--navy-2)">' + chonDe.join(', ') + '</b>' : '<b style="color:var(--red)">không chọn đáp án nào</b>') + '</div>' + opts +
-          (daDe.length ? '<div class="hint" style="margin-top:2px">Đáp án trong Sheet: ' + daDe.join(', ') + '</div>' : '');
+          (HIEN_DAP_AN && daDe.length ? '<div class="hint" style="margin-top:2px">Đáp án trong Sheet: ' + daDe.join(', ') + '</div>' : '');
         var goiY = I.nDA ? diemTN(I.sk, I.sw, I.nDA) : null;
         var mayTxt = !I.nDA ? 'chưa có đáp án' : (chon ? 'đúng ' + I.sk + '/' + I.nDA + ', chọn nhầm ' + I.sw : 'bỏ trống') + ' → <b style="color:' + (goiY > 0 ? 'var(--green)' : 'var(--red)') + '">' + (goiY > 0 ? '+' : '') + f(goiY) + '</b>';
         var d0 = it.v;
@@ -295,8 +296,8 @@
         for (var w = 0; w <= maxW; w++) nutW += '<button class="seg' + (it.w === w && d0 != null ? (w ? ' on-bad' : ' on-sel') : '') + '" data-w="' + w + '">' + w + (w ? ' (−' + f(r2(w * th.truSai)) + ')' : '') + '</button>';
         h += '<div class="q" data-row="' + it.row + '"><div class="row" style="justify-content:space-between"><span class="num"><b>Câu ' + stt + '</b> <span class="muted" style="font-size:12px">' + esc(it.id) + '</span></span>' +
           '<span>' + (chon ? '' : '<span class="badge b-red">Bỏ trống</span> ') + badge + '</span></div><div class="qh" style="margin-top:6px">' + esc(it.cauHoi) + '</div>' + opts +
-          '<div class="grade"><span class="muted">Máy gợi ý: ' + mayTxt + '</span></div>' +
-          '<div class="grade" style="border-top:0;padding-top:0">' + (I.nDA ? '<span class="muted">Đáp án đúng đã chọn:</span>' + nutK + '<span style="width:12px"></span><span class="muted">Chọn nhầm:</span>' + nutW : '<span class="muted">Câu chưa có đáp án trong Sheet.</span>') +
+          (HIEN_DAP_AN ? '<div class="grade"><span class="muted">Máy gợi ý: ' + mayTxt + '</span></div>' : '') +
+          '<div class="grade"' + (HIEN_DAP_AN ? ' style="border-top:0;padding-top:0"' : '') + '>' + (I.nDA ? '<span class="muted">Đáp án đúng đã chọn:</span>' + nutK + '<span style="width:12px"></span><span class="muted">Chọn nhầm:</span>' + nutW : '<span class="muted">Câu chưa có đáp án trong Sheet.</span>') +
           '<span class="grow"></span>' + (it.v != null ? '<button class="seg" data-set="">↺ Bỏ chấm</button>' : '') + '</div></div>';
       });
     }
@@ -335,10 +336,10 @@
       });
       var redraw = function () { dirty = true; var y = window.scrollY; renderBai(); window.scrollTo(0, y); };
       Array.prototype.forEach.call(card.querySelectorAll('[data-k]'), function (btn) {
-        btn.onclick = function () { var i = infoTN(it); setKW(it, +btn.getAttribute('data-k'), it.v != null && it.w != null ? it.w : (it.k == null ? i.sw : 0)); redraw(); };
+        btn.onclick = function () { var i = infoTN(it); setKW(it, +btn.getAttribute('data-k'), it.v != null && it.w != null ? it.w : (it.k == null && HIEN_DAP_AN ? i.sw : 0)); redraw(); };
       });
       Array.prototype.forEach.call(card.querySelectorAll('[data-w]'), function (btn) {
-        btn.onclick = function () { var i = infoTN(it); setKW(it, it.v != null && it.k != null ? it.k : i.sk, +btn.getAttribute('data-w')); redraw(); };
+        btn.onclick = function () { var i = infoTN(it); setKW(it, it.v != null && it.k != null ? it.k : (HIEN_DAP_AN ? i.sk : 0), +btn.getAttribute('data-w')); redraw(); };
       });
       var inp = card.querySelector('.gDiem');
       if (inp) inp.onchange = function () {
